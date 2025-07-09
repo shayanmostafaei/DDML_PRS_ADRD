@@ -10,6 +10,9 @@ This project is maintained by:
 •	[Dr. Shayan Mostafaei] (shayan.mostafaei@ki.se) 
 •	Collaborators/Contributors: Dr. Sara Hägg (sara.hagg@ki.se) and Dr. Daniel Wikström Shemer (daniel.wikstrom.shemer@ki.se)
 
+## Citation
+Mostafaei S, et al. *Age- and APOE-Stratified Polygenic Risk Prediction of Alzheimer’s Disease and Related Dementias Using Machine Learning in the UK Biobank*. JAMA Network Open. 2025. (Manuscript in preparation)
+
 ## Installation
 To install the required dependencies, run:
 ```bash
