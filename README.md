@@ -7,7 +7,7 @@ For more details on the ADRD phenotypes in the UK Biobank, see [UK Biobank Demen
 
 ## Contributors & Maintainers
 This project is maintained by:
-•	[Shayan Mostafaei] (shayan.mostafaei@ki.se) 
+•	[Dr. Shayan Mostafaei] (shayan.mostafaei@ki.se) 
 •	Collaborators/Contributors: Dr. Sara Hägg (sara.hagg@ki.se) and Dr. Daniel Wikström Shemer (daniel.wikstrom.shemer@ki.se)
 
 ## Installation
