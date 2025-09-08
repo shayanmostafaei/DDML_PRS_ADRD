@@ -23,7 +23,7 @@ For questions or contributions, please contact:
 • Dr. Daniel Wikström Shemer (daniel.wikstrom.shemer@ki.se) 
 
 ## Citation
-Mostafaei S, et al. *Age- and APOE-Stratified Polygenic Risk Prediction of Alzheimer’s Disease and Related Dementias Using Machine Learning in the UK Biobank*. JAMA Network Open. 2025. (Manuscript in preparation)
+Mostafaei S, et al. *Age- and APOE-Stratified Polygenic Risk Prediction of Alzheimer’s Disease and Related Dementias Using Machine Learning in the UK Biobank*. Alzheimer's Research & Therapy. 2025. (Manuscript in Peer review)
 
 ## Requirements
 
