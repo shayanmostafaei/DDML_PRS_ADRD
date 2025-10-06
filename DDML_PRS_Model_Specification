@@ -1,0 +1,56 @@
+# Supplementary Table: DDML_PRS Model Specification
+
+**Model run ID**  
+`DDML_PRS_final`
+
+## Model architecture (encoder / decoder / latent)
+- **Input:** 80 GWAS-significant SNPs (preselected from Bellenguez et al., 2022; see manuscript).  
+- **Encoder architecture:** 3 fully-connected layers (512 → 256 → 128 units) with ReLU activations.  
+- **Latent space:** 50-dimensional latent vector. The encoder outputs mean and log-variance; reparameterization trick applied.  
+- **Decoder architecture:** Symmetric mirror of encoder (128 → 256 → 512) to reconstruct genotype input.  
+- **Scalar PRS derivation:** Posterior mean of the 50-d latent variables is mapped to a single scalar (DDML_PRS) used as the PRS in downstream models.
+
+## Bayesian priors & KL term
+- **GWAS priors:** SNP effect sizes and SEs from Bellenguez et al. (2022) were used to set prior means and variances on per-SNP latent contributions; priors incorporated via the KL divergence term in the VAE objective.
+- **KL annealing schedule:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs.
+
+## Training & validation
+- **Training / test split:** Random split — Training = 66.7%, Test = 33.3% of the full cohort (n = 276,566 participants).
+- **Internal validation:** 10% of the training set held out for monitoring (validation ELBO and validation AUC) and early stopping.
+- **Early stopping:** Patience = 10 epochs on validation ELBO (stop if no improvement).
+
+## Final hyperparameters
+- **Optimizer:** Adam  
+- **Learning rate:** 0.001  
+- **Batch size:** 256  
+- **Epochs (max):** 100  
+- **Latent dimension:** 50  
+- **Weight decay / L2:** none  
+- **Dropout:** none
+
+## Validation / Test metrics (reported)
+**Internal validation (held-out 10% of training)**  
+- Validation ELBO: −75.45 ± 7.34 (mean ± SD, per-sample)  
+- Validation AUC (time-dependent): 0.805
+
+**Independent test set metrics (final evaluation)**  
+- DDML_PRS (PRS only, no APOE, no covariates): **AUC = 0.78** (95% CI: 0.77–0.80)  
+- DDML_PRS + APOE: **AUC = 0.83** (95% CI: 0.83–0.85)  
+- DDML_PRS + APOE + age + sex: **AUC = 0.84** (95% CI: 0.83–0.85)  
+- Peak subgroup (age 65–70, with APOE+age+sex): **AUC = 0.847**  
+- Test set C-index (overall, PRS+APOE+age+sex): **C-index = 0.840**  
+- **AUPRC (corrected)** (overall, PRS+APOE+age+sex): **AUPRC = 0.077** (note: earlier draft mistakenly reported 0.981 due to normalization error; corrected value reported in author response). :contentReference[oaicite:13]{index=13}
+
+## Stability / reproducibility
+- **Number of independent runs:** 5 (different RNG seeds)  
+- **Per-seed test AUCs (PRS + APOE + age + sex):**  
+  - Run_1 (seed 123): 0.832  
+  - Run_2 (seed 12321): 0.835  
+  - Run_3 (seed 42): 0.843  
+  - Run_4 (seed 2024): 0.839  
+  - Run_5 (seed 99): 0.845  
+  - **Mean ± SD:** 0.839 ± 0.005
+
+## Notes on provenance & pre-specification
+- Architecture and hyperparameters were pre-specified based on prior VAE work and pilot experiments restricted to the training set; no grid/random search was performed using the independent test set. 
+
