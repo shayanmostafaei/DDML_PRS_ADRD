@@ -84,3 +84,7 @@ For questions or contributions, please contact:
 
 ## Citation
 Mostafaei S, et al. *Age- and APOE-Stratified Polygenic Risk Prediction of Alzheimer’s Disease and Related Dementias Using Machine Learning in the UK Biobank*. Alzheimer's Research & Therapy. 2025. (Manuscript in Peer review)
+
+## 🧾 License
+
+This project is licensed under the **MIT License** — you are free to use, modify, and distribute it with proper attribution.
