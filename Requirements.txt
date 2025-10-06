@@ -1,6 +1,11 @@
-tensorflow>=2.0
-keras
-scikit-learn
-numpy
-pandas
-matplotlib
+# Python 3.10 environment
+
+# Deep learning and ML libraries
+tensorflow==2.12.0
+keras==2.12.0
+scikit-learn==1.3.0
+
+# Data processing and visualization
+numpy==1.25.2
+pandas==2.1.0
+matplotlib==3.8.0
