@@ -14,7 +14,7 @@ This repository contains code, model specifications and documentation for "Impro
 
 ## Reproducibility & provenance
 - Model architecture, final hyperparameters, and per-seed stability results are described in `DDML_PRS_Model_Specification.md`.
-- All preprocessing scripts, analysis notebooks and run logs should be placed in `scripts/` and `notebooks/` folders (if not already present). If you want, I can prepare template scripts for the usual preprocessing and model-training pipelines.
+- All preprocessing scripts, analysis notebooks and run logs are placed in "DDML_PRS_Model.py".
 
 ## Clarifications included in this update
 - Clarified how the 50-dimensional latent vector is turned into a scalar PRS (posterior mean of latent variables). See model spec. 
