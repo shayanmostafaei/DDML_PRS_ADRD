@@ -66,17 +66,6 @@ For downstream evaluation, the continuous PRS is standardized (Z-score) and used
 
 ---
 
-## 🤝 How to Contribute / Update the Repository
-
-We welcome contributions and updates that improve documentation, reproducibility, and analysis code.  
-Please follow the steps below to safely create and submit updates.
-
-### 🪄 1. Create a new branch
-Always work on a separate branch rather than committing directly to `main`:
-```bash
-git checkout -b update/docs-and-model
-
- 
 ## Contact
 For questions or contributions, please contact:
 •	Dr. Shayan Mostafaei (shayan.mostafaei@ki.se) 
@@ -88,3 +77,15 @@ Mostafaei S, et al. *Age- and APOE-Stratified Polygenic Risk Prediction of Alzhe
 ## 🧾 License
 
 This project is licensed under the **MIT License** — you are free to use, modify, and distribute it with proper attribution.
+
+---
+
+## 🤝 How to Contribute / Update the Repository
+
+We welcome contributions and updates that improve documentation, reproducibility, and analysis code.  
+Please follow the steps below to safely create and submit updates.
+
+### 🪄 1. Create a new branch
+Always work on a separate branch rather than committing directly to `main`:
+```bash
+git checkout -b update/docs-and-model
