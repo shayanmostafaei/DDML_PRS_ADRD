@@ -6,7 +6,7 @@ Deep Data-Driven Machine Learning–based Polygenic Risk Score for Alzheimer’s
 
 ## 📖 Overview
 
-This repository contains the implementation, documentation, and analysis code for **DDML_PRS**, a Bayesian variational autoencoder-based polygenic risk score (PRS) designed to improve prediction of Alzheimer’s disease and related dementias (ADRD)in the UK Biobank.  
+This repository contains the implementation, documentation, and analysis code for **DDML_PRS**, a Bayesian variational autoencoder-based polygenic risk score (PRS) designed to improve prediction of Alzheimer’s disease and related dementias (ADRD) in the UK Biobank.  
 The model is compared against classical PRS methods (SBayesR, clumping+thresholding).  
 
 Key goals:
