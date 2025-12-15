@@ -30,7 +30,6 @@
 - **Dropout:** none
 - **Explicit weight decay / L2 regularization:** none
 
-
 Regularization is provided implicitly through GWAS-informed priors and early stopping.
 
 ## APOE region handling
@@ -40,6 +39,15 @@ Regularization is provided implicitly through GWAS-informed priors and early sto
 - ** Without APOE region:** All SNPs within this window removed prior to PRS construction
 
 APOE ε2 / ε3 / ε4 genotype variables were derived from rs7412 and rs429358 and were included only as downstream covariates where stated.
+
+## Performance metrics (independent test set)
+- ** PRS-only models (no covariates):** DDML_PRS (with APOE region):AUC = 0.691 (95% CI: 0.68–0.70)
+- ** PRS-only models (no covariates):** DDML_PRS (without APOE region): AUC = 0.654 (95% CI: 0.65–0.67)
+
+## PRS + covariates models (downstream regression)
+- ** DDML_PRS + APOE + age + sex + PCs:** AUC = 0.84 (95% CI: 0.83–0.85)
+
+
 
 
 ## Validation / Test metrics (reported)
