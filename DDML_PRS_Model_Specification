@@ -4,20 +4,23 @@
 `DDML_PRS_final`
 
 ## Model architecture (encoder / decoder / latent)
-- **Input:** 80 GWAS-significant SNPs (preselected from Bellenguez et al., 2022; see manuscript).  
-- **Encoder architecture:** 3 fully-connected layers (512 → 256 → 128 units) with ReLU activations.  
-- **Latent space:** 50-dimensional latent vector. The encoder outputs mean and log-variance; reparameterization trick applied.  
+- **Input:** 80 GWAS-significant SNPs preselected from Bellenguez et al. (2022), as described in the main manuscript.  
+- **Encoder architecture:** Three fully connected layers with ReLU activations (512 → 256 → 128 units).  
+- **Latent space:** 50-dimensional latent representation. The encoder outputs a mean and log-variance vector; latent variables are sampled using the reparameterization trick. 
 - **Decoder architecture:** Symmetric mirror of encoder (128 → 256 → 512) to reconstruct genotype input.  
-- **Scalar PRS derivation:** Posterior mean of the 50-d latent variables is mapped to a single scalar (DDML_PRS) used as the PRS in downstream models.
+- **Scalar PRS derivation:** The posterior mean of the 50-dimensional latent representation is transformed into a single continuous scalar score (DDML_PRS), which is used as the polygenic risk score in downstream prediction models.
 
 ## Bayesian priors & KL term
-- **GWAS priors:** SNP effect sizes and SEs from Bellenguez et al. (2022) were used to set prior means and variances on per-SNP latent contributions; priors incorporated via the KL divergence term in the VAE objective.
-- **KL annealing schedule:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs.
+- **GWAS priors:**  External GWAS summary statistics from from Jansen et al., that do not include UKB participants, were used to inform prior distributions, providing biologically motivated regularization of the latent representation.
+- **KL divergence:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
+- **KL annealing:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
 
 ## Training & validation
 - **Training / test split:** Random split — Training = 66.7%, Test = 33.3% of the full cohort (n = 276,566 participants).
 - **Internal validation:** 10% of the training set held out for monitoring (validation ELBO and validation AUC) and early stopping.
-- **Early stopping:** Patience = 10 epochs on validation ELBO (stop if no improvement).
+- **Early stopping:** Monitored on validation ELBO. Patience = Monitored on validation ELBO. 
+
+Regularization is provided implicitly through GWAS-informed priors and early stopping.
 
 ## Final hyperparameters
 - **Optimizer:** Adam  
