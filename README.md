@@ -52,7 +52,8 @@ The DDML_PRS is implemented via a **Bayesian Variational Autoencoder (VAE)** wit
 - **Latent space**: 50 dimensions  
 - **Decoder**: Mirror architecture 128 → 256 → 512, reconstructing genotypes  
 - **KL regularization**: Divergence term computed using SNP-wise prior means & variances from GWAS summary statistics  
-- **Inference → PRS**: The posterior mean of the latent vector is fed into a small regression head (dense layers → linear output) to yield a continuous PRS  
+- **Inference → PRS**: The posterior mean of the latent vector is fed into a small regression head (dense layers → linear output) to yield a continuous PRS
+- The VAE is trained on genotype inputs only (80 SNPs). Covariates (age, sex, PCs, and APOE genotype variables where applicable) are included only in downstream Cox/logistic models
 
 **Hyperparameters and training settings**:
 - Optimizer: Adam  
