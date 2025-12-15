@@ -15,12 +15,10 @@
 - **KL divergence:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
 - **KL annealing:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
 
-## Training & validation
+## Training, validation, and data splitting
 - **Training / test split:** Random split — Training = 66.7%, Test = 33.3% of the full cohort (n = 276,566 participants).
 - **Internal validation:** 10% of the training set held out for monitoring (validation ELBO and validation AUC) and early stopping.
 - **Early stopping:** Monitored on validation ELBO. Patience = Monitored on validation ELBO. 
-
-Regularization is provided implicitly through GWAS-informed priors and early stopping.
 
 ## Final hyperparameters
 - **Optimizer:** Adam  
@@ -30,6 +28,19 @@ Regularization is provided implicitly through GWAS-informed priors and early sto
 - **Latent dimension:** 50  
 - **Weight decay / L2:** none  
 - **Dropout:** none
+- **Explicit weight decay / L2 regularization:** none
+
+
+Regularization is provided implicitly through GWAS-informed priors and early stopping.
+
+## APOE region handling
+- ** Genome build:** hg19
+- ** APOE region definition:** chr19: 44–46 Mb
+- ** With APOE region:** SNPs within this window included in PRS construction
+- ** Without APOE region:** All SNPs within this window removed prior to PRS construction
+
+APOE ε2 / ε3 / ε4 genotype variables were derived from rs7412 and rs429358 and were included only as downstream covariates where stated.
+
 
 ## Validation / Test metrics (reported)
 **Internal validation (held-out 10% of training)**  
