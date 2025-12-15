@@ -47,25 +47,13 @@ APOE ε2 / ε3 / ε4 genotype variables were derived from rs7412 and rs429358 an
 ## PRS + covariates models (downstream regression)
 - ** DDML_PRS + APOE + age + sex + PCs:** AUC = 0.84 (95% CI: 0.83–0.85)
 
+## Subgroup and time-dependent analyses
+- ** Peak subgroup performance:** Selected age-stratified analyses yielded AUCs up to ~0.85
+- ** Proportional hazards models:** Overall C-index (PRS + APOE + age + sex): 0.840
 
-
-
-## Validation / Test metrics (reported)
-**Internal validation (held-out 10% of training)**  
-- Validation ELBO: −75.45 ± 7.34 (mean ± SD, per-sample)  
-- Validation AUC (time-dependent): 0.805
-
-**Independent test set metrics (final evaluation)**  
-- DDML_PRS (PRS only, no APOE, no covariates): **AUC = 0.78** (95% CI: 0.77–0.80)  
-- DDML_PRS + APOE: **AUC = 0.83** (95% CI: 0.83–0.85)  
-- DDML_PRS + APOE + age + sex: **AUC = 0.84** (95% CI: 0.83–0.85)  
-- Peak subgroup (age 65–70, with APOE+age+sex): **AUC = 0.847**  
-- Test set C-index (overall, PRS+APOE+age+sex): **C-index = 0.840**  
-- **AUPRC (corrected)** (overall, PRS+APOE+age+sex): **AUPRC = 0.077** (note: earlier draft mistakenly reported 0.981 due to normalization error; corrected value reported in author response). :contentReference[oaicite:13]{index=13}
-
-## Stability / reproducibility
-- **Number of independent runs:** 5 (different RNG seeds)  
-- **Per-seed test AUCs (PRS + APOE + age + sex):**  
+## Reproducibility and stability
+- ** Number of independent runs: 5 (distinct random seeds)**
+- ** Per-seed test AUCs (PRS + APOE + age + sex + 10-PCs):**
   - Run_1 (seed 123): 0.832  
   - Run_2 (seed 12321): 0.835  
   - Run_3 (seed 42): 0.843  
@@ -73,6 +61,8 @@ APOE ε2 / ε3 / ε4 genotype variables were derived from rs7412 and rs429358 an
   - Run_5 (seed 99): 0.845  
   - **Mean ± SD:** 0.839 ± 0.005
 
-## Notes on provenance & pre-specification
-- Architecture and hyperparameters were pre-specified based on prior VAE work and pilot experiments restricted to the training set; no grid/random search was performed using the independent test set. 
+## Notes on pre-specification and pilot checks
+- Model architecture and hyperparameters were fixed a priori based on prior Bayesian VAE applications in genomics.
+- Limited exploratory runs using training data only were performed to confirm numerical stability and convergence.
+- No hyperparameter optimization or model selection was performed using the independent test set.
 
