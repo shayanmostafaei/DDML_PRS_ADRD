@@ -2,391 +2,274 @@
 DDML_PRS: Deep Data-Driven Machine Learning-based Polygenic Risk Score for ADRD
 Author: Shayan Mostafaei et al.
 Repository: https://github.com/shayanmostafaei/DDML_PRS_ADRD
-Environment: Python 3.10, TensorFlow 2.12.0, Keras 2.12.0, scikit-learn 1.3.0
+
+This script:
+  1) Trains a Bayesian VAE on genotype inputs only (80 SNPs).
+  2) Derives a continuous DDML_PRS score from the latent representation.
+  3) Evaluates PRS-only discrimination on an independent test set.
+
+Important methodological safeguards:
+  - The independent test set is NEVER used during VAE training, validation, early stopping,
+    pilot checks, or model selection.
+  - Validation is performed only on a held-out subset of the training data.
+
+Environment (tested):
+  - Python 3.10
+  - TensorFlow/Keras 2.12.x
+  - scikit-learn 1.3.x
 """
 
+from __future__ import annotations
 
 import os
+import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, confusion_matrix, roc_curve
+from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, average_precision_score
 import warnings
+
 warnings.filterwarnings("ignore")
 
-# --------------------------------------------------------------------------
-# Project configuration and data paths
-# --------------------------------------------------------------------------
 
-PROJECT_ID = "sens2017519"
-DATA_PATH = "/proj/sens2017519/nobackup/b2016326_nobackup/UKBB/"
+# -----------------------------
+# Reproducibility helpers
+# -----------------------------
+def set_seeds(seed: int) -> None:
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
 
-# Reproducibility
-np.random.seed(42)
-tf.random.set_seed(42)
 
-# --------------------------------------------------------------------------
+# -----------------------------
 # Data loading
-# --------------------------------------------------------------------------
+# -----------------------------
+def load_data(data_path: str):
+    """
+    Loads preprocessed arrays saved as .npy.
 
-def load_data(data_path):
-    """Load genotype and phenotype data from preprocessed .npy files."""
-    genotype_data = np.load(os.path.join(data_path, "genotype_data.npy"))
-    labels = np.load(os.path.join(data_path, "labels.npy"))                 # ADRD status
-    adrd_subtypes = np.load(os.path.join(data_path, "adrd_subtypes.npy"))   # AD, VaD, mixed, etc.
-    age = np.load(os.path.join(data_path, "age.npy"))                       # Age at baseline
-    apoe4 = np.load(os.path.join(data_path, "apoe4.npy"))                   # APOE4 status
-    ancestry = np.load(os.path.join(data_path, "ancestry.npy"))             # Ancestry (e.g., European)
-    gwas_summary = np.load(os.path.join(data_path, "gwas_summary.npy"))     # Mean & variance of prior (80 SNPs)
-    return genotype_data, labels, adrd_subtypes, age, apoe4, ancestry, gwas_summary
+    Expected files:
+      - genotype_data.npy  (n_samples, n_snps=80)
+      - labels.npy         (n_samples,) binary ADRD status (0/1)
+      - gwas_summary.npy   (n_prior_dims, 2) prior mean/variance
+
+    Notes:
+      - This script uses genotype + labels only.
+      - Covariates (age/sex/10-PCs/APOE genotype) are used in downstream models elsewhere,
+        not as inputs to the VAE.
+    """
+    X = np.load(os.path.join(data_path, "genotype_data.npy")).astype(np.float32)
+    y = np.load(os.path.join(data_path, "labels.npy")).astype(np.int32)
+    gwas_summary = np.load(os.path.join(data_path, "gwas_summary.npy")).astype(np.float32)
+    return X, y, gwas_summary
 
 
-genotypes, labels, adrd_subtypes, age, apoe4, ancestry, gwas_summary = load_data(DATA_PATH)
-
-# --------------------------------------------------------------------------
-# Stratified split
-# --------------------------------------------------------------------------
-
-def stratified_split(genotypes, labels, adrd_subtypes, age, apoe4, ancestry, test_size=1/3):
-    """Split data ensuring balanced distribution of key covariates."""
-    combined = np.column_stack((labels, adrd_subtypes, age, apoe4, ancestry))
-    return train_test_split(
-        genotypes, labels, adrd_subtypes, age, apoe4, ancestry,
-        test_size=test_size, stratify=combined, random_state=42
-    )
-
-X_train, X_test, y_train, y_test, subtypes_train, subtypes_test, age_train, age_test, apoe4_train, apoe4_test, ancestry_train, ancestry_test = stratified_split(
-    genotypes, labels, adrd_subtypes, age, apoe4, ancestry
-)
-
-# --------------------------------------------------------------------------
-# Bayesian Variational Autoencoder (VAE)
-# --------------------------------------------------------------------------
-
-latent_dim = 50  # per manuscript specification
-
-# Priors from GWAS summary statistics (mean, variance)
-snp_prior_mean = gwas_summary[:, 0]
-snp_prior_var = gwas_summary[:, 1]
-
+# -----------------------------
+# VAE components
+# -----------------------------
 def sampling(args):
     """Reparameterization trick."""
     z_mean, z_log_var = args
-    batch = tf.shape(z_mean)[0]
-    dim = tf.shape(z_mean)[1]
-    epsilon = tf.keras.backend.random_normal(shape=(batch, dim))
-    return z_mean + tf.exp(0.5 * z_log_var) * epsilon
+    eps = tf.keras.backend.random_normal(shape=tf.shape(z_mean))
+    return z_mean + tf.exp(0.5 * z_log_var) * eps
 
-# Encoder network
-inputs = keras.Input(shape=(genotypes.shape[1],))
-x = layers.Dense(512, activation="relu")(inputs)
-x = layers.Dense(256, activation="relu")(x)
-x = layers.Dense(128, activation="relu")(x)
-z_mean = layers.Dense(latent_dim, name="z_mean")(x)
-z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
-z = layers.Lambda(sampling, name="z")([z_mean, z_log_var])
 
-encoder = keras.Model(inputs, [z_mean, z_log_var, z], name="encoder")
+def build_encoder(input_dim: int, latent_dim: int) -> keras.Model:
+    inputs = keras.Input(shape=(input_dim,), name="genotype_input")
+    x = layers.Dense(512, activation="relu")(inputs)
+    x = layers.Dense(256, activation="relu")(x)
+    x = layers.Dense(128, activation="relu")(x)
+    z_mean = layers.Dense(latent_dim, name="z_mean")(x)
+    z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
+    z = layers.Lambda(sampling, name="z")([z_mean, z_log_var])
+    return keras.Model(inputs, [z_mean, z_log_var, z], name="encoder")
 
-# Decoder network
-latent_inputs = keras.Input(shape=(latent_dim,))
-x = layers.Dense(128, activation="relu")(latent_inputs)
-x = layers.Dense(256, activation="relu")(x)
-x = layers.Dense(512, activation="relu")(x)
-outputs = layers.Dense(genotypes.shape[1], activation="sigmoid")(x)
-decoder = keras.Model(latent_inputs, outputs, name="decoder")
 
-# --------------------------------------------------------------------------
-# Custom VAE model
-# --------------------------------------------------------------------------
+def build_decoder(output_dim: int, latent_dim: int) -> keras.Model:
+    latent_inputs = keras.Input(shape=(latent_dim,), name="latent_input")
+    x = layers.Dense(128, activation="relu")(latent_inputs)
+    x = layers.Dense(256, activation="relu")(x)
+    x = layers.Dense(512, activation="relu")(x)
+    outputs = layers.Dense(output_dim, activation="sigmoid", name="reconstruction")(x)
+    return keras.Model(latent_inputs, outputs, name="decoder")
+
 
 class BayesianVAE(keras.Model):
-    """Bayesian VAE incorporating GWAS priors in KL divergence."""
+    """
+    Bayesian VAE incorporating priors in the KL term.
+    """
 
-    def __init__(self, encoder, decoder, snp_prior_mean, snp_prior_var, **kwargs):
-        super(BayesianVAE, self).__init__(**kwargs)
+    def __init__(self, encoder, decoder, prior_mean, prior_var, kl_weight=1.0, **kwargs):
+        super().__init__(**kwargs)
         self.encoder = encoder
         self.decoder = decoder
-        self.snp_prior_mean = tf.constant(snp_prior_mean, dtype=tf.float32)
-        self.snp_prior_var = tf.constant(snp_prior_var, dtype=tf.float32)
+
+        self.prior_mean = tf.constant(prior_mean, dtype=tf.float32)
+        self.prior_var = tf.constant(prior_var, dtype=tf.float32)
+
+        self.kl_weight = tf.Variable(kl_weight, trainable=False, dtype=tf.float32)
+
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
-        self.reconstruction_loss_tracker = keras.metrics.Mean(name="reconstruction_loss")
+        self.recon_loss_tracker = keras.metrics.Mean(name="reconstruction_loss")
         self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
+
+    @property
+    def metrics(self):
+        return [self.total_loss_tracker, self.recon_loss_tracker, self.kl_loss_tracker]
 
     def train_step(self, data):
         with tf.GradientTape() as tape:
             z_mean, z_log_var, z = self.encoder(data)
             reconstruction = self.decoder(z)
-            reconstruction_loss = tf.reduce_mean(
-                tf.keras.losses.mean_squared_error(data, reconstruction)
-            )
 
-            # KL divergence term using GWAS prior (Bayesian regularization)
-            kl_loss = -0.5 * tf.reduce_mean(
-                1 + z_log_var
-                - tf.square(z_mean - self.snp_prior_mean) / self.snp_prior_var
+            # Reconstruction loss: MSE over SNPs
+            recon_loss = tf.reduce_mean(tf.keras.losses.mse(data, reconstruction))
+
+            # KL divergence to latent prior
+            # KL(q(z|x) || p(z)) with diagonal Gaussian p(z)=N(prior_mean, prior_var)
+            kl = -0.5 * tf.reduce_mean(
+                1.0
+                + z_log_var
+                - tf.square(z_mean - self.prior_mean) / self.prior_var
                 - tf.exp(z_log_var)
             )
 
-            total_loss = reconstruction_loss + kl_loss
+            total_loss = recon_loss + self.kl_weight * kl
 
         grads = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
 
         self.total_loss_tracker.update_state(total_loss)
-        self.reconstruction_loss_tracker.update_state(reconstruction_loss)
-        self.kl_loss_tracker.update_state(kl_loss)
-
+        self.recon_loss_tracker.update_state(recon_loss)
+        self.kl_loss_tracker.update_state(kl)
         return {
             "loss": self.total_loss_tracker.result(),
-            "reconstruction_loss": self.reconstruction_loss_tracker.result(),
+            "reconstruction_loss": self.recon_loss_tracker.result(),
             "kl_loss": self.kl_loss_tracker.result(),
+            "kl_weight": self.kl_weight,
         }
 
-# Instantiate model
-vae = BayesianVAE(encoder, decoder, snp_prior_mean, snp_prior_var)
-vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001))
 
-# --------------------------------------------------------------------------
-# Training the VAE
-# --------------------------------------------------------------------------
+class KLAnnealingCallback(keras.callbacks.Callback):
+    """Linearly anneal KL weight from 0 to 1 over `anneal_epochs`."""
+    def __init__(self, vae: BayesianVAE, anneal_epochs: int = 20):
+        super().__init__()
+        self.vae = vae
+        self.anneal_epochs = max(1, anneal_epochs)
 
-vae.fit(
-    X_train,
-    epochs=100,
-    batch_size=256,
-    validation_data=(X_test, None),
-    verbose=2
-)
-
-# --------------------------------------------------------------------------
-# Extract latent features and train classifier
-# --------------------------------------------------------------------------
-
-"""
-DDML_PRS: Deep Data-Driven Machine Learning-based Polygenic Risk Score for ADRD
-Author: Shayan Mostafaei et al.
-Repository: https://github.com/shayanmostafaei/DDML_PRS_ADRD
-Environment: Python 3.10, TensorFlow 2.12.0, Keras 2.12.0, scikit-learn 1.3.0
-"""
-
-import os
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, confusion_matrix, roc_curve
-import warnings
-warnings.filterwarnings("ignore")
-
-# --------------------------------------------------------------------------
-# Project configuration and data paths
-# --------------------------------------------------------------------------
-
-PROJECT_ID = "sens2017519"
-DATA_PATH = "/proj/sens2017519/nobackup/b2016326_nobackup/UKBB/"
-
-# Reproducibility
-np.random.seed(42)
-tf.random.set_seed(42)
-
-# --------------------------------------------------------------------------
-# Data loading
-# --------------------------------------------------------------------------
-
-def load_data(data_path):
-    """Load genotype and phenotype data from preprocessed .npy files."""
-    genotype_data = np.load(os.path.join(data_path, "genotype_data.npy"))
-    labels = np.load(os.path.join(data_path, "labels.npy"))                 # ADRD status
-    adrd_subtypes = np.load(os.path.join(data_path, "adrd_subtypes.npy"))   # AD, VaD, mixed, etc.
-    age = np.load(os.path.join(data_path, "age.npy"))                       # Age at baseline
-    apoe4 = np.load(os.path.join(data_path, "apoe4.npy"))                   # APOE4 status
-    ancestry = np.load(os.path.join(data_path, "ancestry.npy"))             # Ancestry (e.g., European)
-    gwas_summary = np.load(os.path.join(data_path, "gwas_summary.npy"))     # Mean & variance of prior (80 SNPs)
-    return genotype_data, labels, adrd_subtypes, age, apoe4, ancestry, gwas_summary
+    def on_epoch_begin(self, epoch, logs=None):
+        w = min(1.0, float(epoch) / float(self.anneal_epochs))
+        self.vae.kl_weight.assign(w)
 
 
-genotypes, labels, adrd_subtypes, age, apoe4, ancestry, gwas_summary = load_data(DATA_PATH)
+# -----------------------------
+# PRS derivation + evaluation
+# -----------------------------
+def standardize(x: np.ndarray) -> np.ndarray:
+    return (x - x.mean()) / (x.std() + 1e-8)
 
-# --------------------------------------------------------------------------
-# Stratified split (prespecified covariates)
-# --------------------------------------------------------------------------
 
-def stratified_split(genotypes, labels, adrd_subtypes, age, apoe4, ancestry, test_size=1/3):
-    """Split data ensuring balanced distribution of key covariates."""
-    combined = np.column_stack((labels, adrd_subtypes, age, apoe4, ancestry))
-    return train_test_split(
-        genotypes, labels, adrd_subtypes, age, apoe4, ancestry,
-        test_size=test_size, stratify=combined, random_state=42
+def main():
+    parser = argparse.ArgumentParser(description="Train Bayesian VAE and derive DDML_PRS (PRS-only).")
+    parser.add_argument("--data_path", type=str, required=True, help="Path containing .npy input files.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--latent_dim", type=int, default=50, help="Latent dimension (per manuscript).")
+    parser.add_argument("--test_size", type=float, default=1/3, help="Independent test split proportion.")
+    parser.add_argument("--val_size", type=float, default=0.10, help="Validation split proportion inside training.")
+    parser.add_argument("--epochs", type=int, default=100, help="Max training epochs.")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    args = parser.parse_args()
+
+    set_seeds(args.seed)
+
+    # Load
+    X, y, gwas_summary = load_data(args.data_path)
+    n_samples, input_dim = X.shape
+
+    # Split: train vs independent test (stratify by labels only)
+    X_train_full, X_test, y_train_full, y_test = train_test_split(
+        X, y,
+        test_size=args.test_size,
+        random_state=args.seed,
+        stratify=y
     )
 
-X_train, X_test, y_train, y_test, subtypes_train, subtypes_test, age_train, age_test, apoe4_train, apoe4_test, ancestry_train, ancestry_test = stratified_split(
-    genotypes, labels, adrd_subtypes, age, apoe4, ancestry
-)
+    # Split: internal validation from training only
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_full, y_train_full,
+        test_size=args.val_size,
+        random_state=args.seed,
+        stratify=y_train_full
+    )
 
-# --------------------------------------------------------------------------
-# Bayesian Variational Autoencoder (VAE)
-# --------------------------------------------------------------------------
+    if gwas_summary.shape[0] != args.latent_dim or gwas_summary.shape[1] < 2:
+        raise ValueError(
+            f"gwas_summary.npy must have shape (latent_dim, 2). "
+            f"Got {gwas_summary.shape}, latent_dim={args.latent_dim}. "
+            f"If your priors are per-SNP (80x2), map them to latent priors outside this script."
+        )
 
-latent_dim = 50  # per manuscript specification
+    prior_mean = gwas_summary[:, 0]
+    prior_var = gwas_summary[:, 1]
+    prior_var = np.clip(prior_var, 1e-8, None)  # numerical safety
 
-# Priors from GWAS summary statistics (mean, variance)
-snp_prior_mean = gwas_summary[:, 0]
-snp_prior_var = gwas_summary[:, 1]
+    # Build and train VAE (genotype-only)
+    encoder = build_encoder(input_dim=input_dim, latent_dim=args.latent_dim)
+    decoder = build_decoder(output_dim=input_dim, latent_dim=args.latent_dim)
 
-def sampling(args):
-    """Reparameterization trick."""
-    z_mean, z_log_var = args
-    batch = tf.shape(z_mean)[0]
-    dim = tf.shape(z_mean)[1]
-    epsilon = tf.keras.backend.random_normal(shape=(batch, dim))
-    return z_mean + tf.exp(0.5 * z_log_var) * epsilon
+    vae = BayesianVAE(encoder, decoder, prior_mean=prior_mean, prior_var=prior_var, kl_weight=0.0)
+    vae.compile(optimizer=keras.optimizers.Adam(learning_rate=args.lr))
 
-# Encoder network
-inputs = keras.Input(shape=(genotypes.shape[1],))
-x = layers.Dense(512, activation="relu")(inputs)
-x = layers.Dense(256, activation="relu")(x)
-x = layers.Dense(128, activation="relu")(x)
-z_mean = layers.Dense(latent_dim, name="z_mean")(x)
-z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
-z = layers.Lambda(sampling, name="z")([z_mean, z_log_var])
+    callbacks = [
+        KLAnnealingCallback(vae, anneal_epochs=20),
+        keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            restore_best_weights=True
+        ),
+    ]
 
-encoder = keras.Model(inputs, [z_mean, z_log_var, z], name="encoder")
+    vae.fit(
+        X_train,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        validation_data=(X_val, None),  # validation from TRAINING ONLY
+        callbacks=callbacks,
+        verbose=2
+    )
 
-# Decoder network
-latent_inputs = keras.Input(shape=(latent_dim,))
-x = layers.Dense(128, activation="relu")(latent_inputs)
-x = layers.Dense(256, activation="relu")(x)
-x = layers.Dense(512, activation="relu")(x)
-outputs = layers.Dense(genotypes.shape[1], activation="sigmoid")(x)
-decoder = keras.Model(latent_inputs, outputs, name="decoder")
+    # Derive DDML_PRS: use latent posterior mean; collapse to scalar by averaging (simple, deterministic)
+    z_mean_test, _, _ = encoder.predict(X_test, verbose=0)
+    ddml_prs = z_mean_test.mean(axis=1)
+    ddml_prs = standardize(ddml_prs)
 
-# --------------------------------------------------------------------------
-# Custom VAE model
-# --------------------------------------------------------------------------
+    # PRS-only evaluation
+    auc = roc_auc_score(y_test, ddml_prs)
+    fpr, tpr, thr = roc_curve(y_test, ddml_prs)
+    youden = np.argmax(tpr - fpr)
+    opt_thr = thr[youden]
+    cm = confusion_matrix(y_test, ddml_prs > opt_thr)
+    auprc = average_precision_score(y_test, ddml_prs)
 
-class BayesianVAE(keras.Model):
-    """Bayesian VAE incorporating GWAS priors in KL divergence."""
+    print("\n--- DDML_PRS (PRS-only) Evaluation on Independent Test Set ---")
+    print(f"ROC AUC: {auc:.3f}")
+    print(f"AUPRC:  {auprc:.3f}")
+    print(f"Optimal threshold (Youden): {opt_thr:.3f}")
+    print("Confusion matrix:")
+    print(cm)
 
-    def __init__(self, encoder, decoder, snp_prior_mean, snp_prior_var, **kwargs):
-        super(BayesianVAE, self).__init__(**kwargs)
-        self.encoder = encoder
-        self.decoder = decoder
-        self.snp_prior_mean = tf.constant(snp_prior_mean, dtype=tf.float32)
-        self.snp_prior_var = tf.constant(snp_prior_var, dtype=tf.float32)
-        self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
-        self.reconstruction_loss_tracker = keras.metrics.Mean(name="reconstruction_loss")
-        self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
+    # Save PRS for downstream covariate models
+    out_path = os.path.join(args.data_path, f"DDML_PRS_test_seed{args.seed}.npy")
+    np.save(out_path, ddml_prs)
+    print(f"\nSaved standardized DDML_PRS for test set to: {out_path}")
+    print("Note: Age/sex/PCs/APOE genotype are incorporated only in downstream models (not in the VAE).")
 
-    def train_step(self, data):
-        with tf.GradientTape() as tape:
-            z_mean, z_log_var, z = self.encoder(data)
-            reconstruction = self.decoder(z)
-            reconstruction_loss = tf.reduce_mean(
-                tf.keras.losses.mean_squared_error(data, reconstruction)
-            )
 
-            # KL divergence term using GWAS prior (Bayesian regularization)
-            kl_loss = -0.5 * tf.reduce_mean(
-                1 + z_log_var
-                - tf.square(z_mean - self.snp_prior_mean) / self.snp_prior_var
-                - tf.exp(z_log_var)
-            )
-
-            total_loss = reconstruction_loss + kl_loss
-
-        grads = tape.gradient(total_loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-
-        self.total_loss_tracker.update_state(total_loss)
-        self.reconstruction_loss_tracker.update_state(reconstruction_loss)
-        self.kl_loss_tracker.update_state(kl_loss)
-
-        return {
-            "loss": self.total_loss_tracker.result(),
-            "reconstruction_loss": self.reconstruction_loss_tracker.result(),
-            "kl_loss": self.kl_loss_tracker.result(),
-        }
-
-# Instantiate model
-vae = BayesianVAE(encoder, decoder, snp_prior_mean, snp_prior_var)
-vae.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001))
-
-# --------------------------------------------------------------------------
-# Training the VAE
-# --------------------------------------------------------------------------
-
-vae.fit(
-    X_train,
-    epochs=100,
-    batch_size=256,
-    validation_data=(X_test, None),
-    verbose=2
-)
-
-# --------------------------------------------------------------------------
-# Extract latent features and train PRS regression model
-# --------------------------------------------------------------------------
-
-z_mean_train, _, _ = encoder.predict(X_train)
-z_mean_test, _, _ = encoder.predict(X_test)
-
-# Map 50D latent mean vector → continuous scalar PRS via regression head
-# Using linear activation to produce continuous PRS values (not probabilities)
-classifier = keras.Sequential([
-    layers.Dense(64, activation="relu"),
-    layers.Dense(32, activation="relu"),
-    layers.Dense(1, activation="linear", name="DDML_PRS")
-])
-
-classifier.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
-    loss="mean_squared_error",
-    metrics=["mae"]
-)
-
-classifier.fit(
-    z_mean_train, y_train,
-    epochs=50,
-    batch_size=256,
-    validation_data=(z_mean_test, y_test),
-    verbose=2
-)
-
-# --------------------------------------------------------------------------
-# Evaluation metrics (AUC, AUPRC, Youden Index)
-# --------------------------------------------------------------------------
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, average_precision_score, precision_recall_curve
-
-# Continuous PRS values (regression outputs)
-prs_continuous = classifier.predict(z_mean_test).flatten()
-
-# Standardize PRS (Z-score normalization)
-prs_standardized = (prs_continuous - np.mean(prs_continuous)) / np.std(prs_continuous)
-
-# For diagnostic metrics, treat higher PRS = higher ADRD risk
-fpr, tpr, thresholds = roc_curve(y_test, prs_standardized)
-auc_score = roc_auc_score(y_test, prs_standardized)
-
-# Precision-Recall and AUPRC
-precision, recall, pr_thresholds = precision_recall_curve(y_test, prs_standardized)
-auprc = average_precision_score(y_test, prs_standardized)
-
-# Compute Youden Index (optimal cutoff)
-youden_index = np.argmax(tpr - fpr)
-optimal_threshold = thresholds[youden_index]
-conf_matrix = confusion_matrix(y_test, prs_standardized > optimal_threshold)
-
-print("\n--- DDML_PRS Model Evaluation ---")
-print(f"AUC (ROC): {auc_score:.3f}")
-print(f"AUPRC: {auprc:.3f}")
-print(f"Optimal Threshold (Youden Index): {optimal_threshold:.3f}")
-print("Confusion Matrix:")
-print(conf_matrix)
-
+if __name__ == "__main__":
+    main()
 # --------------------------------------------------------------------------
 # End
 # --------------------------------------------------------------------------
+
