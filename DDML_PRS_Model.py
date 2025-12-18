@@ -1,22 +1,33 @@
 """
-DDML_PRS: Deep Data-Driven Machine Learning-based Polygenic Risk Score for ADRD
-Author: Shayan Mostafaei et al.
+DDML_PRS: Deep Data-Driven Machine Learning–based Polygenic Risk Score for ADRD
 Repository: https://github.com/shayanmostafaei/DDML_PRS_ADRD
 
-This script:
-  1) Trains a Bayesian VAE on genotype inputs only (80 SNPs).
-  2) Derives a continuous DDML_PRS score from the latent representation.
-  3) Evaluates PRS-only discrimination on an independent test set.
+Purpose
+-------
+This script trains a Bayesian Variational Autoencoder (VAE) on genotype inputs only
+(e.g., 80 preselected SNPs) and derives a continuous, standardized DDML_PRS score.
+It then evaluates PRS-only discrimination (no covariates) on an independent test set
+and saves the standardized DDML_PRS for downstream covariate-adjusted models.
 
-Important methodological safeguards:
-  - The independent test set is NEVER used during VAE training, validation, early stopping,
-    pilot checks, or model selection.
-  - Validation is performed only on a held-out subset of the training data.
+Key methodological safeguards 
+-----------------------------------------------
+1) Covariates are NOT inputs to the VAE:
+   Age, sex, genetic PCs, and APOE genotype variables are incorporated only in
+   downstream regression/survival models (outside this script).
 
-Environment (tested):
-  - Python 3.10
-  - TensorFlow/Keras 2.12.x
-  - scikit-learn 1.3.x
+2) No data leakage:
+   The independent test set is used ONLY for final PRS-only evaluation and is never
+   used for training, early stopping, or validation. 
+
+3) Matched ADRD prevalence:
+   Train/test and train/validation splits are stratified by ADRD case/control status
+   to preserve class proportions.
+
+Environment (tested)
+--------------------
+- Python 3.10
+- TensorFlow/Keras 2.12.x
+- scikit-learn 1.3.x
 """
 
 from __future__ import annotations
@@ -38,6 +49,7 @@ warnings.filterwarnings("ignore")
 # Reproducibility helpers
 # -----------------------------
 def set_seeds(seed: int) -> None:
+    """Set RNG seeds for reproducibility."""
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
@@ -47,17 +59,16 @@ def set_seeds(seed: int) -> None:
 # -----------------------------
 def load_data(data_path: str):
     """
-    Loads preprocessed arrays saved as .npy.
+    Load genotype and label arrays from preprocessed .npy files.
 
     Expected files:
-      - genotype_data.npy  (n_samples, n_snps=80)
-      - labels.npy         (n_samples,) binary ADRD status (0/1)
-      - gwas_summary.npy   (n_prior_dims, 2) prior mean/variance
+      - genotype_data.npy : (n_samples, n_snps) float32/float64
+      - labels.npy        : (n_samples,) int {0,1}
+      - gwas_summary.npy  : (latent_dim, 2) prior_mean and prior_var for latent dimensions
 
     Notes:
       - This script uses genotype + labels only.
-      - Covariates (age/sex/10-PCs/APOE genotype) are used in downstream models elsewhere,
-        not as inputs to the VAE.
+      - Covariates are handled downstream (outside the VAE), as described in the study's manuscript.
     """
     X = np.load(os.path.join(data_path, "genotype_data.npy")).astype(np.float32)
     y = np.load(os.path.join(data_path, "labels.npy")).astype(np.int32)
@@ -69,13 +80,14 @@ def load_data(data_path: str):
 # VAE components
 # -----------------------------
 def sampling(args):
-    """Reparameterization trick."""
+    """Reparameterization trick: z = mu + sigma * epsilon."""
     z_mean, z_log_var = args
     eps = tf.keras.backend.random_normal(shape=tf.shape(z_mean))
     return z_mean + tf.exp(0.5 * z_log_var) * eps
 
 
 def build_encoder(input_dim: int, latent_dim: int) -> keras.Model:
+    """Build encoder network."""
     inputs = keras.Input(shape=(input_dim,), name="genotype_input")
     x = layers.Dense(512, activation="relu")(inputs)
     x = layers.Dense(256, activation="relu")(x)
@@ -87,6 +99,7 @@ def build_encoder(input_dim: int, latent_dim: int) -> keras.Model:
 
 
 def build_decoder(output_dim: int, latent_dim: int) -> keras.Model:
+    """Build decoder network."""
     latent_inputs = keras.Input(shape=(latent_dim,), name="latent_input")
     x = layers.Dense(128, activation="relu")(latent_inputs)
     x = layers.Dense(256, activation="relu")(x)
@@ -97,17 +110,25 @@ def build_decoder(output_dim: int, latent_dim: int) -> keras.Model:
 
 class BayesianVAE(keras.Model):
     """
-    Bayesian VAE incorporating priors in the KL term.
+    Bayesian VAE incorporating GWAS-informed priors via a KL term.
+
+    IMPORTANT:
+      This implementation assumes gwas_summary.npy provides priors over the LATENT dimensions,
+      i.e., shape (latent_dim, 2): [prior_mean, prior_var].
+
+      If your available priors are per-SNP (e.g., 80 x 2), you need to map them to latent priors
+      (or redesign the KL term to operate in SNP/weight space) and document that mapping.
     """
 
-    def __init__(self, encoder, decoder, prior_mean, prior_var, kl_weight=1.0, **kwargs):
+    def __init__(self, encoder: keras.Model, decoder: keras.Model,
+                 prior_mean: np.ndarray, prior_var: np.ndarray,
+                 kl_weight: float = 1.0, **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
         self.decoder = decoder
 
         self.prior_mean = tf.constant(prior_mean, dtype=tf.float32)
         self.prior_var = tf.constant(prior_var, dtype=tf.float32)
-
         self.kl_weight = tf.Variable(kl_weight, trainable=False, dtype=tf.float32)
 
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
@@ -123,11 +144,10 @@ class BayesianVAE(keras.Model):
             z_mean, z_log_var, z = self.encoder(data)
             reconstruction = self.decoder(z)
 
-            # Reconstruction loss: MSE over SNPs
+            # Reconstruction loss (MSE)
             recon_loss = tf.reduce_mean(tf.keras.losses.mse(data, reconstruction))
 
-            # KL divergence to latent prior
-            # KL(q(z|x) || p(z)) with diagonal Gaussian p(z)=N(prior_mean, prior_var)
+            # KL divergence to diagonal Gaussian prior N(prior_mean, prior_var)
             kl = -0.5 * tf.reduce_mean(
                 1.0
                 + z_log_var
@@ -143,6 +163,7 @@ class BayesianVAE(keras.Model):
         self.total_loss_tracker.update_state(total_loss)
         self.recon_loss_tracker.update_state(recon_loss)
         self.kl_loss_tracker.update_state(kl)
+
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.recon_loss_tracker.result(),
@@ -159,36 +180,61 @@ class KLAnnealingCallback(keras.callbacks.Callback):
         self.anneal_epochs = max(1, anneal_epochs)
 
     def on_epoch_begin(self, epoch, logs=None):
-        w = min(1.0, float(epoch) / float(self.anneal_epochs))
-        self.vae.kl_weight.assign(w)
+        weight = min(1.0, float(epoch) / float(self.anneal_epochs))
+        self.vae.kl_weight.assign(weight)
 
 
 # -----------------------------
 # PRS derivation + evaluation
 # -----------------------------
 def standardize(x: np.ndarray) -> np.ndarray:
+    """Z-score standardization."""
     return (x - x.mean()) / (x.std() + 1e-8)
 
 
+def derive_ddml_prs(z_mean: np.ndarray, method: str = "mean") -> np.ndarray:
+    """
+    Derive a 1D continuous score from latent posterior mean (z_mean).
+
+    By default, uses the mean across latent dimensions to obtain a deterministic scalar.
+    If your manuscript uses a different mapping, keep it fixed and document it consistently
+    in the README and model specification.
+    """
+    if method == "mean":
+        score = z_mean.mean(axis=1)
+    else:
+        raise ValueError(f"Unknown PRS derivation method: {method}")
+    return standardize(score)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Train Bayesian VAE and derive DDML_PRS (PRS-only).")
-    parser.add_argument("--data_path", type=str, required=True, help="Path containing .npy input files.")
+    parser = argparse.ArgumentParser(
+        description="Train Bayesian VAE (genotype-only) and derive DDML_PRS (PRS-only evaluation)."
+    )
+    parser.add_argument("--data_path", type=str, required=True,
+                        help="Path containing genotype_data.npy, labels.npy, gwas_summary.npy")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--latent_dim", type=int, default=50, help="Latent dimension (per manuscript).")
-    parser.add_argument("--test_size", type=float, default=1/3, help="Independent test split proportion.")
-    parser.add_argument("--val_size", type=float, default=0.10, help="Validation split proportion inside training.")
-    parser.add_argument("--epochs", type=int, default=100, help="Max training epochs.")
+    parser.add_argument("--test_size", type=float, default=1/3,
+                        help="Independent test split proportion (default 1/3).")
+    parser.add_argument("--val_size", type=float, default=0.10,
+                        help="Validation split proportion within the training data (default 10%).")
+    parser.add_argument("--epochs", type=int, default=100, help="Max epochs.")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--kl_anneal_epochs", type=int, default=20, help="KL annealing epochs.")
+    parser.add_argument("--early_stop_patience", type=int, default=10, help="Early stopping patience.")
+    parser.add_argument("--prs_method", type=str, default="mean", choices=["mean"],
+                        help="How to map latent mean to scalar PRS (default: mean).")
     args = parser.parse_args()
 
     set_seeds(args.seed)
 
-    # Load
+    # Load data
     X, y, gwas_summary = load_data(args.data_path)
-    n_samples, input_dim = X.shape
+    _, input_dim = X.shape
 
-    # Split: train vs independent test (stratify by labels only)
+    # Split: train vs independent test (stratify by ADRD status for matched ADRD prevalence)
     X_train_full, X_test, y_train_full, y_test = train_test_split(
         X, y,
         test_size=args.test_size,
@@ -196,7 +242,7 @@ def main():
         stratify=y
     )
 
-    # Split: internal validation from training only
+    # Split: internal validation from training only 
     X_train, X_val, y_train, y_val = train_test_split(
         X_train_full, y_train_full,
         test_size=args.val_size,
@@ -204,18 +250,19 @@ def main():
         stratify=y_train_full
     )
 
+    # Validate prior dimensions
     if gwas_summary.shape[0] != args.latent_dim or gwas_summary.shape[1] < 2:
         raise ValueError(
             f"gwas_summary.npy must have shape (latent_dim, 2). "
             f"Got {gwas_summary.shape}, latent_dim={args.latent_dim}. "
-            f"If your priors are per-SNP (80x2), map them to latent priors outside this script."
+            f"If your priors are per-SNP (e.g., 80x2), map them to latent priors or "
+            f"redesign the KL term to operate in SNP/weight space."
         )
 
     prior_mean = gwas_summary[:, 0]
-    prior_var = gwas_summary[:, 1]
-    prior_var = np.clip(prior_var, 1e-8, None)  # numerical safety
+    prior_var = np.clip(gwas_summary[:, 1], 1e-8, None)  
 
-    # Build and train VAE (genotype-only)
+    # Build and train Bayesian VAE (genotype-only)
     encoder = build_encoder(input_dim=input_dim, latent_dim=args.latent_dim)
     decoder = build_decoder(output_dim=input_dim, latent_dim=args.latent_dim)
 
@@ -223,29 +270,29 @@ def main():
     vae.compile(optimizer=keras.optimizers.Adam(learning_rate=args.lr))
 
     callbacks = [
-        KLAnnealingCallback(vae, anneal_epochs=20),
+        KLAnnealingCallback(vae, anneal_epochs=args.kl_anneal_epochs),
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=10,
+            patience=args.early_stop_patience,
             restore_best_weights=True
         ),
     ]
 
+    # IMPORTANT: validation uses TRAINING ONLY (NO TEST leakage)
     vae.fit(
         X_train,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        validation_data=(X_val, None),  # validation from TRAINING ONLY
+        validation_data=(X_val, None),
         callbacks=callbacks,
         verbose=2
     )
 
-    # Derive DDML_PRS: use latent posterior mean; collapse to scalar by averaging (simple, deterministic)
+    # Derive PRS from latent posterior mean (z_mean) on test set
     z_mean_test, _, _ = encoder.predict(X_test, verbose=0)
-    ddml_prs = z_mean_test.mean(axis=1)
-    ddml_prs = standardize(ddml_prs)
+    ddml_prs = derive_ddml_prs(z_mean_test, method=args.prs_method)
 
-    # PRS-only evaluation
+    # PRS-only evaluation on independent test set
     auc = roc_auc_score(y_test, ddml_prs)
     fpr, tpr, thr = roc_curve(y_test, ddml_prs)
     youden = np.argmax(tpr - fpr)
@@ -256,15 +303,16 @@ def main():
     print("\n--- DDML_PRS (PRS-only) Evaluation on Independent Test Set ---")
     print(f"ROC AUC: {auc:.3f}")
     print(f"AUPRC:  {auprc:.3f}")
-    print(f"Optimal threshold (Youden): {opt_thr:.3f}")
+    print(f"Optimal threshold (Youden index): {opt_thr:.3f}")
     print("Confusion matrix:")
     print(cm)
+    print("\nNote: Covariate-adjusted performance (age/sex/PCs/APOE genotype) is evaluated "
+          "in downstream regression/survival models, not within this script.")
 
-    # Save PRS for downstream covariate models
+    # Save standardized PRS for downstream models
     out_path = os.path.join(args.data_path, f"DDML_PRS_test_seed{args.seed}.npy")
     np.save(out_path, ddml_prs)
-    print(f"\nSaved standardized DDML_PRS for test set to: {out_path}")
-    print("Note: Age/sex/PCs/APOE genotype are incorporated only in downstream models (not in the VAE).")
+    print(f"\nSaved standardized DDML_PRS (test set) to: {out_path}")
 
 
 if __name__ == "__main__":
@@ -272,4 +320,3 @@ if __name__ == "__main__":
 # --------------------------------------------------------------------------
 # End
 # --------------------------------------------------------------------------
-
