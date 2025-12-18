@@ -52,7 +52,7 @@ This window is used to remove variants in LD with APOE ε2/ε3/ε4–defining SN
 
 This file provides **GWAS summary statistics used to define Bayesian priors** in DDML_PRS.
 
-**Source:** Jansen et al. GWAS summary statistics provided by the authors after **excluding UK Biobank participants** (used to reduce sample overlap with UKB in prior specification).  
+**Source:** Jansen et al (2019). GWAS summary statistics provided by the authors after **excluding UK Biobank participants** (used to reduce sample overlap with UKB in prior specification).  
 **Genome build:** GRCh37/hg19.  
 **Effect allele convention:** `A1` is the **effect allele**; `BETA` is aligned to `A1` and is on the **log-odds scale**. `SE` is the standard error of `BETA`.  
 **Derived quantities:** Prior variance can be computed as `VAR = SE^2`.  
