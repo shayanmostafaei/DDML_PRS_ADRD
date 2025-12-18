@@ -1,7 +1,0 @@
-GWAS_sumstate_without_ukb (DDML_PRS priors)
-
-Source: Jansen et al. (2019) GWAS summary statistics, provided by the authors after excluding UK Biobank participants.
-Genome build: GRCh37/hg19.
-A1 is the effect allele; BETA is aligned to A1 and is on the log-odds scale. SE is the standard error of BETA.
-Variance for priors can be computed as VAR = SE^2.
-The 80 SNPs were selected from Bellenguez et al. (2022); not all remain genome-wide significant in the UKB-excluded summary statistics, which is expected when priors come from a different discovery dataset.
