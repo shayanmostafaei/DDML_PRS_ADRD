@@ -1,68 +1,99 @@
-# Supplementary Table: DDML_PRS Model Specification
+# DDML_PRS Model Specification 
 
 **Model run ID**  
 `DDML_PRS_final`
 
-## Model architecture (encoder / decoder / latent)
-- **Input:** 80 GWAS-significant SNPs preselected from Bellenguez et al. (2022), as described in the main manuscript.  
+---
+
+## 1) Model architecture (encoder / decoder / latent)
+
+- **Input:** 80 GWAS-significant SNPs preselected as described in the main manuscript.  
 - **Encoder architecture:** Three fully connected layers with ReLU activations (512 → 256 → 128 units).  
-- **Latent space:** 50-dimensional latent representation. The encoder outputs a mean and log-variance vector; latent variables are sampled using the reparameterization trick. 
-- **Decoder architecture:** Symmetric mirror of encoder (128 → 256 → 512) to reconstruct genotype input.  
-- **Scalar PRS derivation:** The posterior mean of the 50-dimensional latent representation is transformed into a single continuous scalar score (DDML_PRS), which is used as the polygenic risk score in downstream prediction models.
+- **Latent space:** 50-dimensional latent representation. The encoder outputs a mean vector (*z_mean*) and log-variance vector (*z_log_var*); latent variables are sampled using the reparameterization trick.  
+- **Decoder architecture:** Symmetric mirror of the encoder (128 → 256 → 512) reconstructing the genotype input.  
+- **PRS derivation:** A single continuous scalar score (**DDML_PRS**) is derived from the latent posterior mean (*z_mean*) and standardized (Z-score). This standardized DDML_PRS is used as the PRS in downstream prediction models.
 
-## Bayesian priors & KL term
-- **GWAS priors:**  External GWAS summary statistics from from Jansen et al., that do not include UKB participants, were used to inform prior distributions, providing biologically motivated regularization of the latent representation.
-- **KL divergence:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
-- **KL annealing:** Linear KL-weight annealing from 0 → 1 over the first 20 epochs. 
+> **Covariate handling:** Age, sex, genetic PCs, and APOE genotype variables are **not** inputs to the VAE. They are incorporated **only in downstream regression/survival models** where stated.
 
-## Training, validation, and data splitting
-- **Training / test split:** Random split — Training = 66.7%, Test = 33.3% of the full cohort (n = 276,566 participants).
-- **Internal validation:** 10% of the training set held out for monitoring (validation ELBO and validation AUC) and early stopping.
-- **Early stopping:** Monitored on validation ELBO. Patience = Monitored on validation ELBO. 
+---
 
-## Final hyperparameters
+## 2) Bayesian priors & KL regularization
+
+- **GWAS-informed priors:** External GWAS summary statistics from **Jansen et al.** (excluding UK Biobank participants) were used to inform prior distributions, providing biologically motivated regularization of the latent representation.  
+- **KL divergence:** The KL term is included in the VAE objective to constrain the latent space under the specified priors.  
+- **KL annealing:** Linear annealing of the KL weight from 0 → 1 over the first 20 epochs.
+
+---
+
+## 3) Training, validation, and data splitting
+
+- **Training / independent test split:** Random split with stratification by ADRD case/control status — Training = 66.7%, Test = 33.3% of the cohort (n ≈ 276,566).  
+- **Internal validation:** 10% of the training set held out as an internal validation subset for monitoring convergence and early stopping.  
+- **Test-set usage:** The independent test set is used **only for final evaluation** and is not used for training, early stopping, or model selection.
+
+- **Early stopping:** Monitored on validation ELBO; **patience = 10 epochs** (restore best weights).
+
+---
+
+## 4) Final hyperparameters 
+
 - **Optimizer:** Adam  
 - **Learning rate:** 0.001  
 - **Batch size:** 256  
 - **Epochs (max):** 100  
 - **Latent dimension:** 50  
-- **Weight decay / L2:** none  
-- **Dropout:** none
-- **Explicit weight decay / L2 regularization:** none
+- **Dropout:** none  
+- **Explicit weight decay / L2 regularization:** none  
 
-Regularization is provided implicitly through GWAS-informed priors and early stopping.
+> Regularization is provided implicitly through GWAS-informed priors, KL regularization (with annealing), and early stopping.
 
-## APOE region handling
-- ** Genome build:** hg19
-- ** APOE region definition:** chr19: 44–46 Mb
-- ** With APOE region:** SNPs within this window included in PRS construction
-- ** Without APOE region:** All SNPs within this window removed prior to PRS construction
+---
 
-APOE ε2 / ε3 / ε4 genotype variables were derived from rs7412 and rs429358 and were included only as downstream covariates where stated.
+## 5) APOE region handling
 
-## Performance metrics (independent test set)
-- ** PRS-only models (no covariates):** DDML_PRS (with APOE region):AUC = 0.691 (95% CI: 0.68–0.70)
-- ** PRS-only models (no covariates):** DDML_PRS (without APOE region): AUC = 0.654 (95% CI: 0.65–0.67)
+- **Genome build:** hg19 (GRCh37)  
+- **APOE region definition:** chr19: 44.4–46.5 Mb  
+- **With APOE region:** SNPs within this window are included in PRS construction.  
+- **Without APOE region:** SNPs within this window are removed prior to PRS construction. 
 
-## PRS + covariates models (downstream regression)
-- ** DDML_PRS + APOE + age + sex + PCs:** AUC = 0.84 (95% CI: 0.83–0.85)
+**APOE genotype variables:** APOE ε2/ε3/ε4 allele counts are derived from rs7412 and rs429358 and are included **only as downstream covariates where stated**.
 
-## Subgroup and time-dependent analyses
-- ** Peak subgroup performance:** Selected age-stratified analyses yielded AUCs up to ~0.85
-- ** Proportional hazards models:** Overall C-index (PRS + APOE + age + sex): 0.840
+---
 
-## Reproducibility and stability
-- ** Number of independent runs: 5 (distinct random seeds)**
-- ** Per-seed test AUCs (PRS + APOE + age + sex + 10-PCs):**
-  - Run_1 (seed 123): 0.832  
-  - Run_2 (seed 12321): 0.835  
-  - Run_3 (seed 42): 0.843  
-  - Run_4 (seed 2024): 0.839  
-  - Run_5 (seed 99): 0.845  
+## 6) Performance metrics (independent test set)
+
+### PRS-only models (no covariates)
+- **DDML_PRS (with APOE region):** AUC = **0.6907** (95% CI: 0.68–0.70)  
+- **DDML_PRS (without APOE region):** AUC = **0.6542** (95% CI: 0.65–0.67)
+
+### PRS + covariates models (downstream regression; main study's findings)
+- **DDML_PRS + age + sex + 10 PCs (with APOE region):** AUC = **0.83** (95% CI: 0.83–0.85)  
+> **Interpretation note:** Higher AUCs in the main manuscript correspond to the **PRS + covariates** setting, consistent with the age- and APOE-stratified study design.
+
+---
+
+## 7) Subgroup and time-dependent analyses
+
+- **Peak subgroup performance:** Selected age-stratified analyses yielded AUCs up to ~0.85 (reported in subgroup/sensitivity analyses).  
+- **Cox Proportional hazards models:** Overall C-index (PRS + covariates setting): **0.840**.
+
+---
+
+## 8) Reproducibility and stability
+
+- **Number of independent runs:** 5  
+- **Per-seed test AUCs (DDML_PRS + APOE + age + sex + 10 PCs):**
+  - Seed 123: 0.832  
+  - Seed 12321: 0.835  
+  - Seed 42: 0.843  
+  - Seed 2024: 0.839  
+  - Seed 99: 0.845  
   - **Mean ± SD:** 0.839 ± 0.005
 
-## Notes on pre-specification and pilot checks
-- Model architecture and hyperparameters were fixed a priori based on prior Bayesian VAE applications in genomics.
-- Limited exploratory runs using training data only were performed to confirm numerical stability and convergence.
-- No hyperparameter optimization or model selection was performed using the independent test set.
+---
 
+## 9) Notes on pre-specification and pilot checks
+
+- Model architecture and hyperparameters were fixed *a priori* based on prior Bayesian VAE applications in genomics and stability considerations.  
+- Limited exploratory runs restricted to the training data were used only to verify numerical stability and convergence.  
+- No hyperparameter optimization and no model selection were performed using the independent test set.
