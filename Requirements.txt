@@ -1,11 +1,21 @@
-# Python 3.10 environment
+# ============================================================
+# DDML_PRS_ADRD – Python requirements
+# Tested and used for all analyses reported in the manuscript
+# Python version: 3.10
+# ============================================================
 
-# Deep learning and ML libraries
+# Deep learning framework
 tensorflow==2.12.0
 keras==2.12.0
+
+# Machine learning & evaluation
 scikit-learn==1.3.0
 
-# Data processing and visualization
+# Numerical computing
 numpy==1.25.2
+
+# Data handling
 pandas==2.1.0
+
+# Visualization (used for diagnostic plots only)
 matplotlib==3.8.0
