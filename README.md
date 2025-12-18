@@ -48,6 +48,16 @@ This window is used to remove variants in LD with APOE ε2/ε3/ε4–defining SN
 - The **independent test set** is used **only for final evaluation** (not for training/early stopping).
 - Model stability is assessed by repeating final training across multiple random seeds.
 
+### 5) GWAS priors file (UKB-excluded): `GWAS_sumstate_without_ukb.xlsx`
+
+This file provides **GWAS summary statistics used to define Bayesian priors** in DDML_PRS.
+
+**Source:** Jansen et al. GWAS summary statistics provided by the authors after **excluding UK Biobank participants** (used to reduce sample overlap with UKB in prior specification).  
+**Genome build:** GRCh37/hg19.  
+**Effect allele convention:** `A1` is the **effect allele**; `BETA` is aligned to `A1` and is on the **log-odds scale**. `SE` is the standard error of `BETA`.  
+**Derived quantities:** Prior variance can be computed as `VAR = SE^2`.  
+**Note on significance:** The 80-SNP panel was selected from Bellenguez et al. (2022). Because priors are taken from an independent (UKB-excluded) source, not all of these 80 variants remain genome-wide significant in the UKB-excluded summary statistics; in the Bayesian framework, variants with weaker evidence contribute less.
+
 ---
 
 ## 🧰 Software & Tools
