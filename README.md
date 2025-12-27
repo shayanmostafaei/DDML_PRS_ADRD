@@ -38,7 +38,7 @@ To avoid ambiguity, we explicitly distinguish:
 - **Without APOE region:** SNPs within the predefined APOE region are removed **prior** to PRS construction.
 
 **Genome build:** GRCh37/hg19  
-**APOE window:** `chr19: 44.4–46.5 Mb` 
+**APOE window:** `chr19: 44–46 Mb` 
 This window is used to remove variants in LD with APOE ε2/ε3/ε4–defining SNPs prior to computing “no-APOE” PRS.
 
 **APOE genotype variables:** ε2/ε3/ε4 allele counts are derived from `rs7412` and `rs429358` and are used **only as downstream covariates where stated**.
