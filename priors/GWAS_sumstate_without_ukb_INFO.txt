@@ -1,7 +1,65 @@
-GWAS_sumstate_without_ukb (DDML_PRS priors)
+GWAS_sumstate_without_ukb (DDML_PRS priors) — INFO / METADATA
+============================================================
 
-Source: Jansen et al. (2019) GWAS summary statistics, provided by the authors after excluding UK Biobank participants.
-Genome build: GRCh37/hg19.
-A1 is the effect allele; BETA is aligned to A1 and is on the log-odds scale. SE is the standard error of BETA.
-Variance for priors can be computed as VAR = SE^2.
-The 80 SNPs were selected from Bellenguez et al. (2022); not all remain genome-wide significant in the UKB-excluded summary statistics, which is expected when priors come from a different discovery dataset.
+What this is
+------------
+This file documents the **UK Biobank–excluded** GWAS summary statistics used to define
+GWAS-informed priors for the DDML_PRS workflow.
+
+Source
+------
+- **Jansen et al. (2019)** Alzheimer’s disease GWAS summary statistics.
+- A **UK Biobank–excluded** version of these summary statistics was provided directly by
+  the study authors and was used in the manuscript to reduce sample overlap with UKB.
+
+IMPORTANT redistribution note
+-----------------------------
+The original author-provided UKB-excluded summary statistics may not be redistributable.
+Therefore, this repository may include only **metadata** (this file) and/or **derived priors**
+rather than the full UKB-excluded GWAS file. Users should obtain an equivalent UKB-excluded
+summary-stat file through appropriate channels.
+
+Genome build / coordinates
+--------------------------
+- **Genome build:** GRCh37 / hg19
+- If the summary statistics include genomic coordinates, they should correspond to hg19.
+
+Column definitions (conventions used)
+-------------------------------------
+- **A1**: effect allele
+- **BETA**: effect size aligned to **A1** on the **log-odds** scale
+- **SE**: standard error of **BETA**
+- **VAR (prior variance)** can be computed as: **VAR = SE^2**
+- Recommended additional fields (if available): RSID/SNPID, CHR, BP, A2 (non-effect allele),
+  P, EAF/MAF, N
+
+Harmonization / alignment notes
+-------------------------------
+- Ensure allele alignment is consistent across:
+  (i) the genotype coding used in UK Biobank (target) and
+  (ii) the effect allele (**A1**) used in the GWAS summary statistics.
+- Handle strand-ambiguous (A/T, C/G) SNPs carefully (e.g., exclude if allele frequency
+  information is insufficient for safe alignment).
+
+Relationship to the DDML_PRS model
+----------------------------------
+- The DDML_PRS VAE is trained on **genotypes only** (80 SNPs) and **does not** take covariates
+  (age/sex/PCs/APOE genotype) as inputs.
+- GWAS-informed priors derived from these summary statistics are used for Bayesian
+  regularization (via a KL term) as described in the manuscript and model specification.
+
+80-SNP panel provenance (expected behavior)
+--------------------------------------------
+- The **80 SNPs** used as genotype inputs were selected from **Bellenguez et al. (2022)**.
+- Not all of these 80 variants necessarily remain genome-wide significant in the
+  UKB-excluded Jansen summary statistics; this is expected when priors come from a
+  different discovery dataset and is compatible with a Bayesian framework (weaker evidence
+  contributes less via larger uncertainty).
+
+APOE region clarification (context used elsewhere in the repo)
+-------------------------------------------------------------
+- **APOE region window (hg19/GRCh37): chr19: 44–46 Mb**
+  - “With APOE region”: variants in this window are retained.
+  - “Without APOE region”: variants in this window are removed prior to PRS construction.
+- **APOE genotype variables** are derived from rs429358 and rs7412 and are used **only as
+  downstream covariates where stated** (never as VAE inputs).
