@@ -24,6 +24,10 @@ Key methodological safeguards
    Train/test and train/validation splits are stratified by ADRD case/control status
    to preserve class proportions.
 
+4) Fixed data split across multi-seed runs:
+   - When running multiple seeds (robustness), the TRAIN/VAL/TEST split is held FIXED
+     using --split_seed, while --seed controls RNG initialization for training only.
+
 Environment (tested)
 --------------------
 - Python 3.10+
@@ -46,6 +50,11 @@ The paper describes GWAS-informed priors derived from GWAS effect sizes and stan
 errors. This script assumes you have already produced priors over the LATENT dimensions
 (i.e., latent_dim x 2). If you have per-SNP priors (e.g., 80x2), you must map them to
 latent priors (or redesign the KL term to operate in SNP/weight space) and document the mapping.
+
+Implementation note for validation
+---------------------------------
+This model subclasses keras.Model and defines both train_step and test_step so that
+validation loss (val_loss) is computed correctly for early stopping.
 """
 
 from __future__ import annotations
@@ -55,7 +64,7 @@ import json
 import argparse
 import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -72,15 +81,13 @@ warnings.filterwarnings("ignore")
 # -----------------------------
 def set_seeds(seed: int, deterministic: bool = True) -> None:
     """Set RNG seeds for reproducibility."""
-    # TF/Keras convenience seed setter (covers Python, NumPy, TF)
     try:
-        tf.keras.utils.set_random_seed(seed)
+        tf.keras.utils.set_random_seed(seed)  # covers Python, NumPy, TF
     except Exception:
         np.random.seed(seed)
         tf.random.set_seed(seed)
 
     if deterministic:
-        # Best-effort determinism (may depend on hardware/drivers)
         os.environ["TF_DETERMINISTIC_OPS"] = "1"
         try:
             tf.config.experimental.enable_op_determinism()
@@ -92,9 +99,7 @@ def set_seeds(seed: int, deterministic: bool = True) -> None:
 # Data loading
 # -----------------------------
 def load_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Load genotype, labels, and latent priors arrays from preprocessed .npy files.
-    """
+    """Load genotype, labels, and latent priors arrays from preprocessed .npy files."""
     X = np.load(os.path.join(data_path, "genotype_data.npy")).astype(np.float32)
     y = np.load(os.path.join(data_path, "labels.npy")).astype(np.int32)
     gwas_summary = np.load(os.path.join(data_path, "gwas_summary.npy")).astype(np.float32)
@@ -104,11 +109,10 @@ def load_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 def maybe_scale_genotypes(X: np.ndarray, auto_scale: bool = True) -> np.ndarray:
     """
     If genotypes are allele counts {0,1,2}, map to [0,1] by dividing by 2.0.
-    This helps match the default sigmoid decoder output.
+    This helps match the sigmoid decoder output.
     """
     if not auto_scale:
         return X
-    # Heuristic: if max > 1.0 we assume {0,1,2} encoding.
     xmax = float(np.nanmax(X))
     if xmax > 1.0:
         return X / 2.0
@@ -151,7 +155,7 @@ class BayesianVAE(keras.Model):
     """
     Bayesian VAE incorporating GWAS-informed priors via a KL term.
 
-    This KL term computes KL( q(z|x) || p(z) ) where:
+    KL term computes KL( q(z|x) || p(z) ) where:
       q(z|x) = N(z_mean, diag(exp(z_log_var)))
       p(z)   = N(prior_mean, diag(prior_var))
     """
@@ -181,16 +185,15 @@ class BayesianVAE(keras.Model):
     def metrics(self):
         return [self.total_loss_tracker, self.recon_loss_tracker, self.kl_loss_tracker]
 
-    def _compute_losses(self, x: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
-        z_mean, z_log_var, z = self.encoder(x, training=True)
-        reconstruction = self.decoder(z, training=True)
+    def _compute_losses(self, x: tf.Tensor, training: bool) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+        z_mean, z_log_var, z = self.encoder(x, training=training)
+        reconstruction = self.decoder(z, training=training)
 
         # Reconstruction loss (MSE over inputs)
         recon_loss = tf.reduce_mean(tf.keras.losses.mse(x, reconstruction))
 
         # KL divergence KL(q||p) for diagonal Gaussians
         var_q = tf.exp(z_log_var)
-        # kl per sample = 0.5 * sum_j [ log(var_pj) - log(var_qj) + (var_qj + (mu_qj - mu_pj)^2)/var_pj - 1 ]
         kl_per_dim = 0.5 * (
             tf.math.log(self.prior_var)
             - z_log_var
@@ -204,8 +207,9 @@ class BayesianVAE(keras.Model):
 
     def train_step(self, data):
         x = data[0] if isinstance(data, (tuple, list)) else data
+
         with tf.GradientTape() as tape:
-            total_loss, recon_loss, kl_loss = self._compute_losses(x)
+            total_loss, recon_loss, kl_loss = self._compute_losses(x, training=True)
 
         grads = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
@@ -222,9 +226,8 @@ class BayesianVAE(keras.Model):
         }
 
     def test_step(self, data):
-        # Needed for proper validation loss / early stopping without hacks
         x = data[0] if isinstance(data, (tuple, list)) else data
-        total_loss, recon_loss, kl_loss = self._compute_losses(x)
+        total_loss, recon_loss, kl_loss = self._compute_losses(x, training=False)
 
         self.total_loss_tracker.update_state(total_loss)
         self.recon_loss_tracker.update_state(recon_loss)
@@ -244,7 +247,7 @@ class KLAnnealingCallback(keras.callbacks.Callback):
     def __init__(self, vae: BayesianVAE, anneal_epochs: int = 20):
         super().__init__()
         self.vae = vae
-        self.anneal_epochs = max(1, anneal_epochs)
+        self.anneal_epochs = max(1, int(anneal_epochs))
 
     def on_epoch_begin(self, epoch, logs=None):
         weight = min(1.0, float(epoch) / float(self.anneal_epochs))
@@ -255,10 +258,7 @@ class KLAnnealingCallback(keras.callbacks.Callback):
 # PRS derivation + scaling
 # -----------------------------
 def derive_raw_ddml_prs(z_mean: np.ndarray, method: str = "mean") -> np.ndarray:
-    """
-    Derive a 1D continuous score from latent posterior mean (z_mean).
-    Default: deterministic scalar = mean across latent dimensions.
-    """
+    """Derive a 1D continuous score from latent posterior mean (z_mean)."""
     if method == "mean":
         return z_mean.mean(axis=1)
     raise ValueError(f"Unknown PRS derivation method: {method}")
@@ -278,34 +278,86 @@ def fit_standardizer(train_scores: np.ndarray) -> Standardizer:
 
 
 # -----------------------------
+# Split helper (fixed across seeds)
+# -----------------------------
+def make_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    test_size: float,
+    val_size: float,
+    split_seed: int,
+) -> Dict[str, np.ndarray]:
+    """
+    Create stratified TRAIN/VAL/TEST splits using a fixed split_seed.
+    Returns dict containing arrays and indices for reproducibility.
+    """
+    n_samples = X.shape[0]
+    idx_all = np.arange(n_samples)
+
+    X_train_full, X_test, y_train_full, y_test, idx_train_full, idx_test = train_test_split(
+        X, y, idx_all,
+        test_size=test_size,
+        random_state=split_seed,
+        stratify=y
+    )
+
+    X_train, X_val, y_train, y_val, idx_train, idx_val = train_test_split(
+        X_train_full, y_train_full, idx_train_full,
+        test_size=val_size,
+        random_state=split_seed,
+        stratify=y_train_full
+    )
+
+    return {
+        "X_train": X_train,
+        "y_train": y_train,
+        "idx_train": idx_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "idx_val": idx_val,
+        "X_test": X_test,
+        "y_test": y_test,
+        "idx_test": idx_test,
+    }
+
+
+# -----------------------------
 # One run (one seed)
 # -----------------------------
 def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, seed: int) -> Dict:
+    # Seed controls model initialization/training randomness ONLY
     set_seeds(seed, deterministic=bool(args.deterministic))
 
     n_samples, input_dim = X.shape
 
-    # Split: train vs independent test (stratified)
-    X_train_full, X_test, y_train_full, y_test, idx_train_full, idx_test = train_test_split(
-        X, y, np.arange(n_samples),
+    # Fixed split across all seeds (paper alignment)
+    splits = make_splits(
+        X=X,
+        y=y,
         test_size=args.test_size,
-        random_state=seed,
-        stratify=y
+        val_size=args.val_size,
+        split_seed=args.split_seed,
     )
 
-    # Split: internal validation from training only (stratified)
-    X_train, X_val, y_train, y_val, idx_train, idx_val = train_test_split(
-        X_train_full, y_train_full, idx_train_full,
-        test_size=args.val_size,
-        random_state=seed,
-        stratify=y_train_full
-    )
+    X_train = splits["X_train"]
+    y_train = splits["y_train"]
+    idx_train = splits["idx_train"]
+
+    X_val = splits["X_val"]
+    y_val = splits["y_val"]
+    idx_val = splits["idx_val"]
+
+    X_test = splits["X_test"]
+    y_test = splits["y_test"]
+    idx_test = splits["idx_test"]
 
     # Validate prior dimensions
     if gwas_summary.shape[0] != args.latent_dim or gwas_summary.shape[1] < 2:
         raise ValueError(
-            f"gwas_summary.npy must have shape (latent_dim, 2). "
-            f"Got {gwas_summary.shape}, latent_dim={args.latent_dim}."
+            "gwas_summary.npy must have shape (latent_dim, 2).\n"
+            f"Got {gwas_summary.shape}, latent_dim={args.latent_dim}.\n"
+            "If you have SNP-level priors (e.g., 80x2), you must map them to latent priors "
+            "(latent_dim x 2) and document the mapping."
         )
 
     prior_mean = gwas_summary[:, 0]
@@ -321,7 +373,7 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
         prior_mean=prior_mean,
         prior_var=prior_var,
         kl_weight=0.0,
-        name=f"BayesianVAE_seed{seed}"
+        name=f"BayesianVAE_seed{seed}",
     )
     vae.compile(optimizer=keras.optimizers.Adam(learning_rate=args.lr))
 
@@ -335,13 +387,14 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
     ]
 
     # IMPORTANT: validation uses TRAINING ONLY (NO TEST leakage)
+    # Use validation_data=X_val (not (X_val, None)) for clean Keras behavior.
     vae.fit(
         X_train,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        validation_data=(X_val, None),
+        validation_data=X_val,
         callbacks=callbacks,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
 
     # --- Derive RAW PRS for train/val/test (deterministic from z_mean) ---
@@ -368,8 +421,7 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
     opt_thr = float(thr[youden])
     cm = confusion_matrix(y_test, ddml_prs_test > opt_thr)
 
-    # Print split summary (helps match manuscript / rebuttal language)
-    def _cc(yy):  # cases/controls
+    def _cc(yy):
         cases = int(np.sum(yy == 1))
         ctrls = int(np.sum(yy == 0))
         return cases, ctrls
@@ -379,7 +431,8 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
     te_cases, te_ctrls = _cc(y_test)
 
     print("\n============================================================")
-    print(f"Seed: {seed}")
+    print(f"Seed (training RNG): {seed}")
+    print(f"Split seed (fixed):  {args.split_seed}")
     print("Split sizes (stratified by ADRD status):")
     print(f"  Train: {len(y_train):,} (cases={tr_cases:,}, controls={tr_ctrls:,})")
     print(f"  Val:   {len(y_val):,} (cases={va_cases:,}, controls={va_ctrls:,})")
@@ -396,7 +449,7 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
     out_dir = os.path.join(args.data_path, "ddml_outputs")
     os.makedirs(out_dir, exist_ok=True)
 
-    # Save standardized PRS aligned to original sample indices (full-length vector with NaNs where not present)
+    # Save standardized PRS aligned to original sample indices
     prs_full = np.full((n_samples,), np.nan, dtype=np.float32)
     prs_full[idx_train] = ddml_prs_train.astype(np.float32)
     prs_full[idx_val] = ddml_prs_val.astype(np.float32)
@@ -405,9 +458,10 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
     np.save(os.path.join(out_dir, f"DDML_PRS_standardized_full_seed{seed}.npy"), prs_full)
     np.save(os.path.join(out_dir, f"DDML_PRS_standardized_test_seed{seed}.npy"), ddml_prs_test.astype(np.float32))
 
-    # Save split indices for exact reproducibility downstream
-    splits = {
-        "seed": seed,
+    # Save split indices once (fixed), but keep per-seed file for convenience
+    run_summary = {
+        "seed_training_rng": seed,
+        "seed_split_fixed": int(args.split_seed),
         "idx_train": idx_train.tolist(),
         "idx_val": idx_val.tolist(),
         "idx_test": idx_test.tolist(),
@@ -417,10 +471,11 @@ def run_one_seed(args, X: np.ndarray, y: np.ndarray, gwas_summary: np.ndarray, s
         "args": vars(args),
     }
     with open(os.path.join(out_dir, f"run_summary_seed{seed}.json"), "w") as f:
-        json.dump(splits, f, indent=2)
+        json.dump(run_summary, f, indent=2)
 
     return {
         "seed": seed,
+        "split_seed": int(args.split_seed),
         "roc_auc": float(auc),
         "auprc": float(auprc),
         "opt_threshold": float(opt_thr),
@@ -439,9 +494,18 @@ def main():
     )
     parser.add_argument("--data_path", type=str, required=True,
                         help="Path containing genotype_data.npy, labels.npy, gwas_summary.npy")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (used if --seeds not provided).")
+
+    # Seed for training randomness (weights init, minibatch order, etc.)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Training RNG seed (used if --seeds not provided).")
+
+    # Fixed split seed (must remain constant across multi-seed runs to match manuscript)
+    parser.add_argument("--split_seed", type=int, default=42,
+                        help="Fixed seed for train/val/test splitting (kept constant across seeds).")
+
     parser.add_argument("--seeds", type=str, default="",
-                        help='Optional comma-separated list of seeds for multi-run robustness (e.g., "1,2,3,4,5").')
+                        help='Optional comma-separated list of training seeds (e.g., "1,2,3,4,5").')
+
     parser.add_argument("--latent_dim", type=int, default=50, help="Latent dimension (per manuscript).")
     parser.add_argument("--test_size", type=float, default=1/3,
                         help="Independent test split proportion (default 1/3).")
@@ -465,7 +529,7 @@ def main():
     X, y, gwas_summary = load_data(args.data_path)
     X = maybe_scale_genotypes(X, auto_scale=bool(args.auto_scale_genotypes))
 
-    # Parse seeds
+    # Parse training seeds
     if args.seeds.strip():
         seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
     else:
@@ -476,12 +540,13 @@ def main():
         out = run_one_seed(args, X, y, gwas_summary, seed=s)
         all_runs.append(out)
 
-    # Multi-run summary (helps align with "5-seed reproducibility" language)
+    # Multi-run summary (aligns with "5-seed reproducibility" language)
     if len(all_runs) > 1:
         aucs = np.array([r["roc_auc"] for r in all_runs], dtype=float)
         auprcs = np.array([r["auprc"] for r in all_runs], dtype=float)
         print("\n================ Multi-run summary ================")
-        print(f"Seeds: {seeds}")
+        print(f"Training seeds: {seeds}")
+        print(f"Fixed split seed: {args.split_seed}")
         print(f"AUC range: {aucs.min():.4f}–{aucs.max():.4f}  (mean ± SD: {aucs.mean():.4f} ± {aucs.std(ddof=1):.4f})")
         print(f"AUPRC range: {auprcs.min():.4f}–{auprcs.max():.4f} (mean ± SD: {auprcs.mean():.4f} ± {auprcs.std(ddof=1):.4f})")
 
