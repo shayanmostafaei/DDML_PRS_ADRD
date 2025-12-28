@@ -2,145 +2,131 @@
 
 **Deep Data-Driven Machine Learning–based Polygenic Risk Score (DDML_PRS) for Alzheimer’s Disease & Related Dementias (ADRD)**
 
----
+This repository accompanies the manuscript: **“Improved Polygenic Risk Prediction for Alzheimer’s Disease and Related Dementias Using Deep Learning: Age and APOE-Stratified Analysis”**.
 
-## 📖 Overview
-
-This repository contains code and documentation for **DDML_PRS**, a **Bayesian variational autoencoder (VAE)**–based approach for constructing a continuous polygenic risk score (PRS) for ADRD in the **UK Biobank (UKB)**.
-
-The study’s primary focus is **age- and APOE-stratified analysis**, and the main reported AUCs are **covariate-adjusted** (age/sex/10-PCs ± APOE genotype, where stated). For transparency, we also report **PRS-only** (genetics-only) performance separately.
-
-**Comparators included in this project:**
-- **DDML_PRS** (Bayesian VAE-derived PRS)
-- **SBayesR PRS** (GCTB)
-- **Clumping + Thresholding (C+T) PRS** (PLINK)
-- Simple baselines (e.g., **logistic regression** on the same SNP set) for interpretability/context. 
+> **Key takeaway for readers:**  
+> The manuscript’s *primary* reported AUCs are **covariate-adjusted** (PRS combined downstream with age/sex/10 PCs ± APOE genotype, as stated). We also report **PRS-only (genetics-only)** performance separately to avoid ambiguity (especially around “no-APOE” wording).
 
 ---
 
-## ✅ Key clarifications 
+## Repository contents (high level)
 
-### 1) PRS-only vs PRS + covariates
-We provide **two distinct evaluation settings**:
-
-- **PRS-only (genetics-only):** PRS evaluated without age/sex/PCs/APOE genotype.
-- **PRS + covariates (primary manuscript setting):** PRS combined **downstream** with covariates (age, sex, and genetic PCs; APOE genotype where stated) using logistic regression and/or survival models.
-
-> The **primary study findings** correspond to the **PRS + covariates** setting, consistent with the study title (Age- and APOE-stratified analysis).
-
-### 2) Covariates are NOT inputs to the VAE
-The **Bayesian VAE is trained on genotype inputs only** (the selected SNP set).
-Covariates (age, sex, PCs, and APOE genotype variables) are incorporated **only in downstream regression/survival models** and **not** as VAE input nodes.
-
-### 3) APOE region definition (“with APOE region” vs “without APOE region”)
-To avoid ambiguity, we explicitly distinguish:
-- **With APOE region:** SNPs within the APOE region are included in PRS construction.
-- **Without APOE region:** SNPs within the predefined APOE region are removed **prior** to PRS construction.
-
-**Genome build:** GRCh37/hg19  
-**APOE window:** `chr19: 44–46 Mb` 
-This window is used to remove variants in LD with APOE ε2/ε3/ε4–defining SNPs prior to computing “no-APOE” PRS.
-
-**APOE genotype variables:** ε2/ε3/ε4 allele counts are derived from `rs7412` and `rs429358` and are used **only as downstream covariates where stated**.
-
-### 4) Leakage safeguards and evaluation
-- Splits are performed to ensure **matched ADRD case/control proportion** between training and independent test sets (stratified by ADRD status).
-- The **independent test set** is used **only for final evaluation** (not for training/early stopping).
-- Model stability is assessed by repeating final training across multiple random seeds.
-
-### 5) GWAS priors file (UKB-excluded): `GWAS_sumstate_without_ukb.xlsx`
-
-This file provides **GWAS summary statistics used to define Bayesian priors** in DDML_PRS.
-
-**Source:** Jansen et al (2019). GWAS summary statistics provided by the authors after **excluding UK Biobank participants** (used to reduce sample overlap with UKB in prior specification).  
-**Genome build:** GRCh37/hg19.  
-**Effect allele convention:** `A1` is the **effect allele**; `BETA` is aligned to `A1` and is on the **log-odds scale**. `SE` is the standard error of `BETA`.  
-**Derived quantities:** Prior variance can be computed as `VAR = SE^2`.  
-**Note on significance:** The 80-SNP panel was selected from Bellenguez et al. (2022). Because priors are taken from an independent (UKB-excluded) source, not all of these 80 variants remain genome-wide significant in the UKB-excluded summary statistics; in the Bayesian framework, variants with weaker evidence contribute less.
+- `DDML_PRS_Model.py` — main DDML_PRS implementation (Bayesian VAE)
+- `DDML_PRS_Model_Specification` — model specification details
+- `priors/` — prior inputs / helper files (see “GWAS priors” below)
+- `SBayesR_sumstats_without_ukb.snpRes.gz` — SBayesR-related summary-stat output (UKB-excluded context)
+- `Requirements.txt` — Python dependencies
 
 ---
 
-## 🧰 Software & Tools
+## Study snapshot 
 
-Analyses were carried out using **R (v4.2.2)** and **Python (v3.10)**.
-
-### R packages
-- `survival` — Cox proportional hazards modeling  
-- `survminer` — survival visualization  
-- `pROC` — ROC curve analysis  
-- `timeROC` — time-dependent ROC analysis  
-- `ggplot2` — visualization  
-
-### Python libraries
-- `tensorflow` / `keras` 
-- `scikit-learn` 
-- `numpy`, `pandas`
-
-### Genetic / PRS tools
-- **GCTB** — SBayesR
-- **PLINK** — clumping + thresholding PRS
+- **Population:** 276,566 unrelated UK Biobank participants of White British/European ancestry, median follow-up 9.19 years.
+- **Phenotype window:** follow-up to the earliest of ADRD diagnosis, death, or end of follow-up (Apr 1, 2018).
+- **Train/test split (fixed):**
+  - Train: 2/3 of sample, **N=184,378** (885 ADRD cases, 183,493 controls)
+  - Test: 1/3 of sample, **N=92,188** (443 ADRD cases, 91,745 controls)
+  - Split preserves case/control proportion (stratified by ADRD status).
 
 ---
 
-## 🏗️ Model architecture & method description (DDML_PRS)
+## “With APOE region” vs “Without APOE region” (critical definitions)
 
-DDML_PRS is implemented via a **Bayesian Variational Autoencoder (VAE)**:
+To avoid any misunderstanding, we explicitly distinguish:
 
-- **Input:** genotype matrix of the selected SNPs (e.g., 80 SNPs)  
-- **Encoder:** Dense layers `512 → 256 → 128 → (z_mean, z_log_var)`  
-- **Latent space:** 50 dimensions  
-- **Decoder:** mirror network `128 → 256 → 512` reconstructing genotype input  
-- **Bayesian regularization:** KL divergence term incorporates **GWAS-informed priors** (from external GWAS summary statistics)  
-- **PRS derivation:** a continuous scalar **DDML_PRS** is derived from the latent posterior mean and standardized (Z-score) for downstream evaluation
+### A) APOE region inclusion/exclusion in PRS construction
+- **Genome build:** GRCh37/hg19  
+- **APOE region window:** `chr19:44–46 Mb`
+  - **With APOE region:** variants in this window are retained during PRS construction.
+  - **Without APOE region:** all SNPs within `chr19:44–46 Mb` are removed *prior* to PRS construction, and PRS are recomputed using remaining variants.
 
-**Training configuration:**
-- Optimizer: Adam  
-- Learning rate: 0.001  
-- Batch size: 256  
-- Epochs: up to 100  
-- Early stopping: used on a held-out validation subset of the training data  
-- Dropout: none  
-- Explicit weight decay/L2: none  
-> Regularization is provided implicitly via GWAS-informed priors and early stopping.
+### B) APOE genotype variables as downstream covariates (NOT VAE inputs)
+- APOE ε2/ε3/ε4 genotype is derived from **rs429358** and **rs7412**.
+- These genotype variables are used **only** as covariates in downstream regression/survival models where stated.
+- **They are not input nodes to the Bayesian VAE.**
 
 ---
 
-## 📊 Reported metrics 
+## Variant set and GWAS priors (DDML_PRS)
 
-We report:
-- **AUC (ROC)** for classification performance
-- **AUPRC** for precision–recall performance (useful under class imbalance)
-- Survival outcomes (C-index / time-dependent ROC) where applicable
+### DDML_PRS SNP panel (80 SNPs)
+- DDML_PRS uses **80 independent GWAS-significant SNPs** selected from Bellenguez et al. (2022).
+- These 80 SNPs are the genotype input to the VAE.
 
-**Important:** AUC values differ depending on whether covariates are included downstream.
-- **PRS-only AUCs** quantify genetics-only discrimination.
-- **PRS + covariates AUCs** reflect combined predictive models (age/sex/PCs ± APOE genotype), which are the primary manuscript results.
+### GWAS-informed priors (UKB-excluded)
+- Prior means/variances are defined using **UK Biobank–excluded** GWAS summary statistics (Jansen et al., obtained directly from authors in the study).
+- This UKB-excluded constraint is used to reduce sample overlap with UK Biobank during prior specification.
+- If the exact author-provided UKB-excluded summary statistics cannot be redistributed, users must supply an equivalent priors file locally (or use what is provided under `priors/`, if applicable).
 
----
-
-## 🗂️ Data inputs and expected formats
-
-Because UK Biobank data cannot be redistributed, this repository assumes you have access to UKB-approved genotype and phenotype data.
-
-Typical inputs include:
-- Genotype matrix for the selected SNPs (e.g., `n_samples × 80`)
-- ADRD case/control label
-- Covariates for downstream models (age, sex, genetic PCs; APOE genotype where applicable)
-- External GWAS summary statistics used for priors (excluding UKB where applicable)
+> Note: The 80-SNP panel was selected by Bellenguez et al. (2022). Because priors are taken from an independent (UKB-excluded) source, not all 80 variants remain genome-wide significant in that UKB-excluded dataset. In the Bayesian framework, variants with weaker evidence contribute less via smaller effects and larger uncertainty.
 
 ---
 
-## ▶️ Reproducible workflow 
+## DDML_PRS method (Bayesian VAE)
 
-1) **Prepare genotype and phenotype arrays** (SNP matrix + labels; covariates for downstream models)  
-2) **Train DDML VAE on training data only** (internal validation for early stopping)  
-3) **Derive standardized DDML_PRS**  
-4) Evaluate:
-   - **PRS-only** AUC
-   - **PRS + covariates** AUC via downstream regression/survival models  
-5) Repeat training under multiple seeds for stability
+### Architecture (fixed a priori)
+- Encoder: Dense layers **512 → 256 → 128** (ReLU)
+- Latent space: **50 dimensions**
+- Decoder: mirror network **128 → 256 → 512**
+- Bayesian regularization: KL term incorporates GWAS-informed priors
+- PRS derivation: posterior mean of latent variables aggregated to a single continuous scalar score (DDML_PRS), standardized for downstream evaluation
 
-> Scripts are organized to make it explicit which steps use genotype-only training vs downstream covariate-adjusted evaluation.
+### Training (fixed a priori; no tuning)
+- Optimizer: Adam (learning rate **0.001**)
+- Batch size: **256**
+- Early stopping on **internal validation** subset drawn from training data only
+- No dropout / no explicit weight decay (regularization via priors + early stopping)
+- **No architecture search and no hyperparameter tuning** were performed.
+- Two diagnostic pilot runs (training data only) checked numerical stability and sensitivity to prior strength; they were not used for model selection.
+
+### Reproducibility & robustness
+- Final prespecified model retrained across **5 random seeds** using the same fixed split:
+  - test-set AUC range: **0.832–0.845** (mean ± SD: **0.839 ± 0.005**).
+- A bounded robustness analysis (training/validation only) checked learning rates and KL-annealing schedules; the independent test set was not used for this check.
+
+---
+
+## Results that often get misinterpreted (PRS-only vs covariate-adjusted)
+
+### PRS-only (genetics-only) AUCs (no covariates)
+These are standalone PRS models **without** age/sex/PCs/APOE genotype:
+
+| PRS model     | With APOE region AUC (95% CI) | Without APOE region AUC (95% CI) |
+|--------------|-------------------------------:|----------------------------------:|
+| **DDML_PRS** | 0.6907 (0.68–0.70)             | 0.6542 (0.65–0.67)                |
+| SBayesR_PRS  | 0.6604 (0.65–0.67)             | 0.6101 (0.60–0.62)                |
+| C+T_PRS      | 0.6120 (0.60–0.62)             | 0.5805 (0.57–0.59)                |
+
+
+---
+
+## How to run (practical workflow)
+
+Because UK Biobank data cannot be redistributed, you must provide:
+- Genotypes for the selected SNP set (e.g., an `N × 80` matrix)
+- ADRD case/control labels
+- Covariates (age, sex, 10 genetic PCs, and APOE genotype where applicable) for downstream models
+
+Suggested minimal workflow:
+1. Prepare inputs:
+   - `X_geno`: genotype matrix (N × 80)
+   - `y`: ADRD status (0/1)
+   - optional downstream covariates: age, sex, PCs, APOE genotype variables
+2. Split data exactly as in paper (fixed split; stratified by `y`):
+   - train: 2/3, test: 1/3
+3. Train the Bayesian VAE on training data only (validation drawn from training only)
+4. Export standardized DDML_PRS for all individuals
+5. Evaluate:
+   - PRS-only AUC (DDML_PRS only)
+   - PRS + covariates AUC (primary manuscript setting)
+
+> Entry points: see `DDML_PRS_Model.py` (implementation) and `DDML_PRS_Model_Specification` (settings).
+
+---
+
+## Notes on external validation (scope / limitation)
+
+External replication was not attempted in the study due to practical constraints (cohort differences, phenotype definitions, and limited sample sizes for comparable age- and APOE-stratified analyses). External validation remains important future work.
 
 ---
 
@@ -159,14 +145,6 @@ Mostafaei S, et al. *Improved Polygenic Risk Prediction for Alzheimer’s Diseas
 
 ## 🧾 License
 
-MIT License.
+MIT License (see `LICENSE`)
 
 ---
-
-## 🤝 Contributing
-
-Contributions improving documentation, reproducibility, and analysis code are welcome.
-
-### 1) Create a new branch
-```bash
-git checkout -b update/docs-and-model
