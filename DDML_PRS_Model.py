@@ -540,7 +540,7 @@ def main():
         out = run_one_seed(args, X, y, gwas_summary, seed=s)
         all_runs.append(out)
 
-    # Multi-run summary (aligns with "5-seed reproducibility" language)
+    # Multi-run summary 
     if len(all_runs) > 1:
         aucs = np.array([r["roc_auc"] for r in all_runs], dtype=float)
         auprcs = np.array([r["auprc"] for r in all_runs], dtype=float)
@@ -561,3 +561,4 @@ if __name__ == "__main__":
 # --------------------------------------------------------------------------
 # End
 # --------------------------------------------------------------------------
+
