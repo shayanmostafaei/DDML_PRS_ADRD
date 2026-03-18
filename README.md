@@ -139,7 +139,7 @@ External replication was not attempted in the study due to practical constraints
 
 ## 📝 Citation
 
-Mostafaei S, et al. *Improved Polygenic Risk Prediction for Alzheimer’s Disease and Related Dementias Using Deep Learning: Age and APOE-Stratified Analysis*. Alzheimer’s Research & Therapy. 2025. (Manuscript under peer review)
+Mostafaei S, Shemer DW, Mak JK, Karlsson IK, Hägg S. Improved polygenic risk prediction for alzheimer’s disease and related dementias using deep learning: age and APOE-stratified analysis. Alzheimer's Research & Therapy. 2026 Mar 12.
 
 ---
 
