@@ -5,7 +5,7 @@
 This repository accompanies the manuscript: **“Improved Polygenic Risk Prediction for Alzheimer’s Disease and Related Dementias Using Deep Learning: Age and APOE-Stratified Analysis”**.
 
 > **Key takeaway for readers:**  
-> The manuscript’s *primary* reported AUCs are **covariate-adjusted** (PRS combined downstream with age/sex/10 PCs ± APOE genotype, as stated). We also report **PRS-only (genetics-only)** performance separately to avoid ambiguity (especially around “no-APOE” wording).
+> The article’s *primary* reported AUCs are **covariate-adjusted** (PRS combined downstream with age/sex/10 PCs ± APOE genotype, as stated). We also report **PRS-only (genetics-only)** performance separately to avoid ambiguity (especially around “no-APOE” wording).
 
 ---
 
